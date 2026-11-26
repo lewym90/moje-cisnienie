@@ -11,33 +11,44 @@ const ROOT = path.join(__dirname, '..');
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const unb64 = (s) => Buffer.from(s, 'base64').toString('utf8');
 
-function fakeGithub(isPrivate = true) {
-  const gh = { files: {}, puts: 0, sha: 1 };
-  gh.fetch = async (url, init) => {
+function fakeServer() {
+  const srv = { data: C.emptyData(), zm: 0, konta: { jan: 'haslo1234' }, posts: 0, push: null };
+  const res = (code, body) => ({ ok: code < 300, status: code, text: async () => JSON.stringify(body) });
+  srv.fetch = async (url, init) => {
     const u = new URL(url);
+    if (u.hostname !== '188-68-247-201.sslip.io') return res(404, {});
+    const p = u.pathname.replace('/cisnienie-api', '');
     const method = (init && init.method) || 'GET';
-    const res = (code, body) => ({ ok: code < 300, status: code, headers: { get: () => null }, text: async () => typeof body === 'string' ? body : JSON.stringify(body) });
-    if (u.hostname !== 'api.github.com') {
-      if (u.pathname.endsWith('/tools/przypomnienia.yml')) return res(200, fs.readFileSync(path.join(ROOT, 'tools/przypomnienia.yml'), 'utf8'));
-      return res(404, {});
+    const body = init && init.body ? JSON.parse(init.body) : {};
+    const auth = (init && init.headers && init.headers.Authorization) || '';
+    if (p === '/rejestracja') {
+      if (body.kod !== 'Serce') return res(403, { blad: 'Nieprawidłowy kod zaproszenia.' });
+      srv.konta[body.login] = body.haslo;
+      return res(200, { token: 'tok-' + body.login, konto: { login: body.login, imie: body.imie } });
     }
-    const p = decodeURIComponent(u.pathname);
-    if (p === '/repos/jan/dane') return res(200, { private: isPrivate, default_branch: 'main', permissions: { push: true } });
-    if (p === '/repos/jan/dane/branches/main') return res(200, {});
-    const m = /^\/repos\/jan\/dane\/contents\/(.+)$/.exec(p);
-    if (m) {
-      const f = gh.files[m[1]];
-      if (method === 'GET') return f ? res(200, { sha: f.sha, content: b64(f.text) }) : res(404, {});
-      const body = JSON.parse(init.body);
-      if ((f ? f.sha : undefined) !== body.sha) return res(409, {});
-      gh.files[m[1]] = { text: unb64(body.content), sha: 'sha' + (++gh.sha) };
-      gh.puts++;
-      return res(200, {});
+    if (p === '/logowanie') {
+      if (srv.konta[body.login] !== body.haslo) return res(401, { blad: 'Zły login lub hasło.' });
+      return res(200, { token: 'tok-' + body.login, konto: { login: body.login, imie: '' } });
     }
-    return res(404, {});
+    if (p === '/vapid') return res(200, { klucz: 'AA' });
+    if (!/^Bearer tok-/.test(auth) || srv.wygasla) return res(401, { blad: 'Zaloguj się ponownie.' });
+    if (p === '/dane' && method === 'POST') {
+      srv.posts++;
+      const m = C.merge(srv.data, C.validate(body.dane).data);
+      if (!C.sameData(m, srv.data)) { srv.data = m; srv.zm++; }
+      return res(200, { zmienione: srv.zm, dane: JSON.parse(C.serialize(srv.data)) });
+    }
+    if (p === '/dane') {
+      if (+u.searchParams.get('znane') === srv.zm) return res(200, { zmiana: false, zmienione: srv.zm });
+      return res(200, { zmiana: true, zmienione: srv.zm, dane: JSON.parse(C.serialize(srv.data)) });
+    }
+    if (p === '/wyloguj') return res(200, { ok: true });
+    return res(404, { blad: 'brak' });
   };
-  return gh;
+  return srv;
 }
+
+const KONTO = JSON.stringify({ token: 'tok-jan', login: 'jan', imie: 'Jan' });
 
 const windows = [];
 test.after(() => { windows.forEach((w) => { try { w.close(); } catch (e) { /* ignoruj */ } }); });
@@ -52,6 +63,7 @@ function boot(opts = {}) {
   w.Element.prototype.scrollIntoView = function () {};
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w.fetch = opts.fetch || (async () => { throw new TypeError('offline'); });
+  if (opts.konto !== false) w.localStorage.setItem('cisnienie.konto.v1', KONTO);
   if (opts.localStorage) for (const [k, v] of Object.entries(opts.localStorage)) w.localStorage.setItem(k, v);
   const errors = [];
   w.addEventListener('error', (e) => errors.push(e.message));
@@ -214,57 +226,77 @@ test('cel i godziny przypomnień zapisują się w danych', async () => {
   name.value = '  Jan  Kowalski ';
   name.dispatchEvent(new w.Event('change', { bubbles: true }));
   assert.equal(C.getCfg(stored(w)).nm, 'Jan Kowalski');
-  // przełącznik przypomnień bez kopii pokazuje wyjaśnienie
+  // przełącznik przypomnień na urządzeniu bez obsługi powiadomień pokazuje wyjaśnienie
   click(w, q(doc, '.tabbar [data-view="home"]'));
   const t = q(doc, '#push-toggle');
   t.checked = true;
   t.dispatchEvent(new w.Event('change', { bubbles: true }));
   assert.equal(t.checked, false);
-  assert.match(q(doc, '.toast').textContent, /kopię na GitHubie/);
+  assert.match(q(doc, '.toast').textContent, /nie obsługuje powiadomień/);
   assert.deepEqual(errors, []);
 });
 
-test('kopia na GitHubie: połączenie, wysyłka po pomiarze, odmowa dla publicznego repozytorium', async () => {
-  const gh = fakeGithub();
-  const { w, doc, errors } = boot({ fetch: gh.fetch });
+test('konto: rejestracja, zapis po pomiarze, wylogowanie czyści urządzenie, utrata sesji', async () => {
+  const srv = fakeServer();
+  const { w, doc, errors } = boot({ fetch: srv.fetch, konto: false });
   await tick(60);
-  click(w, q(doc, '.tabbar [data-view="settings"]'));
-  q(doc, '#repo-input').value = 'jan/dane';
-  q(doc, '#token-input').value = 'github_pat_x';
-  click(w, q(doc, '[data-action="sync-connect"]'));
-  await tick(1200);
-  assert.ok(gh.files['cisnienie-dane.json'], 'utworzono plik kopii');
-  click(w, q(doc, '.tabbar [data-view="home"]'));
+  assert.ok(q(doc, '#auth-form'), 'bez konta pokazuje się ekran zakładania konta');
+  assert.ok(doc.body.classList.contains('no-nav'));
+  q(doc, '#au-imie').value = 'Anna Nowak';
+  q(doc, '#au-login').value = 'anna';
+  q(doc, '#au-haslo').value = 'tajnehaslo';
+  q(doc, '#au-kod').value = 'zly';
+  q(doc, '#auth-form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(80);
+  assert.match(q(doc, '#au-err').textContent, /Nieprawidłowy kod/);
+  q(doc, '#au-kod').value = 'Serce';
+  q(doc, '#auth-form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(150);
+  assert.ok(q(doc, '.last-card'), 'po założeniu konta – ekran startowy');
+  assert.equal(C.getCfg(stored(w)).nm, 'Anna Nowak', 'imię trafia na raport');
   click(w, q(doc, '.last-card .btn.red'));
   type(w, q(doc, '#ed-in-s'), '133');
   type(w, q(doc, '#ed-in-di'), '83');
   click(w, q(doc, '#ed-save'));
-  await tick(1500);
-  const remote = C.parseSerialized(gh.files['cisnienie-dane.json'].text).data;
-  assert.equal(C.listReadings(remote)[0].s, 133);
-  assert.deepEqual(errors, []);
-
-  const pub = fakeGithub(false);
-  const b = boot({ fetch: pub.fetch });
+  await tick(1600);
+  assert.equal(C.listReadings(srv.data)[0].s, 133, 'pomiar trafił na serwer');
+  // wylogowanie: dane znikają z urządzenia, zostają na serwerze
+  click(w, q(doc, '.tabbar [data-view="settings"]'));
+  click(w, q(doc, '[data-action="logout"]'));
+  click(w, q(doc, '[data-action="confirm-yes"]'));
+  await tick(150);
+  assert.ok(q(doc, '#auth-form'));
+  assert.equal(C.countReadings(stored(w)), 0);
+  assert.equal(w.localStorage.getItem('cisnienie.konto.v1'), '');
+  // ponowne logowanie przywraca pomiary
+  click(w, q(doc, '[data-action="auth-mode"][data-m="login"]'));
+  q(doc, '#au-login').value = 'anna';
+  q(doc, '#au-haslo').value = 'tajnehaslo';
+  q(doc, '#auth-form').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(150);
+  assert.equal(C.countReadings(stored(w)), 1);
+  // sesja unieważniona na serwerze (np. zmiana hasła na innym telefonie) → ekran logowania
+  srv.wygasla = true;
+  await w.SCSync.run();
   await tick(60);
-  click(b.w, q(b.doc, '.tabbar [data-view="settings"]'));
-  q(b.doc, '#repo-input').value = 'jan/dane';
-  q(b.doc, '#token-input').value = 'x';
-  click(b.w, q(b.doc, '[data-action="sync-connect"]'));
-  await tick(300);
-  assert.match(q(b.doc, '#connect-error').textContent, /PUBLICZNE/);
-  assert.equal(Object.keys(pub.files).length, 0);
+  assert.ok(q(doc, '#auth-form'));
+  assert.match(q(doc, '.toast').textContent, /Zaloguj się ponownie/);
+  assert.deepEqual(errors, []);
 });
 
-test('zadanie przypomnień trafia do repozytorium z podmienionym repozytorium kodu i kluczem', async () => {
-  const gh = fakeGithub();
-  const { w } = boot({ fetch: gh.fetch, localStorage: { 'cisnienie.sync.v1': JSON.stringify({ owner: 'jan', repo: 'dane', token: 't', branch: 'main' }) } });
+test('dwa urządzenia jednej osoby widzą te same pomiary', async () => {
+  const srv = fakeServer();
+  const A = boot({ fetch: srv.fetch });
+  const B = boot({ fetch: srv.fetch });
+  await tick(100);
+  click(A.w, q(A.doc, '.last-card .btn.red'));
+  type(A.w, q(A.doc, '#ed-in-s'), '128');
+  type(A.w, q(A.doc, '#ed-in-di'), '81');
+  click(A.w, q(A.doc, '#ed-save'));
+  await tick(1600);
+  await B.w.SCSync.poll();
   await tick(60);
-  const yml = fs.readFileSync(path.join(ROOT, 'tools/przypomnienia.yml'), 'utf8');
-  const r = await w.SCSync.ensureWorkflow(yml.replaceAll('__CODE_REPO__', 'lewym90/moje-cisnienie'));
-  assert.equal(r, 'created');
-  assert.equal(await w.SCSync.ensureWorkflow(yml.replaceAll('__CODE_REPO__', 'lewym90/moje-cisnienie')), 'same');
-  assert.match(gh.files['.github/workflows/przypomnienia.yml'].text, /repository: lewym90\/moje-cisnienie/);
+  assert.match(q(B.doc, '.lc-bp').textContent, /128 \/ 81/);
 });
 
 test('import kopii JSON i CSV bez duplikatów', async () => {

@@ -1,22 +1,30 @@
 /*
- * Ciśnienie – kopia zapasowa i synchronizacja przez GitHub (API „Contents”).
+ * Ciśnienie – konto i synchronizacja z serwerem.
  *
- * Dane trafiają do pliku JSON w PRYWATNYM repozytorium użytkownika. Każda zmiana to osobny commit,
- * więc cała historia jest zachowana. Przy każdej synchronizacji dane z GitHuba i z urządzenia są
- * scalane (nowszy wpis wygrywa), więc kilka urządzeń nigdy się nawzajem nie nadpisuje.
- *
- * Token dostępu jest przechowywany wyłącznie na urządzeniu (localStorage) i wysyłany tylko do api.github.com.
+ * Każdy użytkownik ma własne konto; serwer przechowuje (zaszyfrowane) tylko jego pomiary.
+ * Zasady:
+ *  - Pomiary zawsze najpierw zapisują się na urządzeniu (działa bez internetu).
+ *  - Wysyłka scala dane urządzenia z danymi z serwera (wygrywa nowsza wersja każdego pomiaru),
+ *    więc kilka urządzeń jednej osoby ma zawsze to samo.
+ *  - Flaga „niewysłane zmiany” znika dopiero, gdy serwer potwierdzi zapis.
  */
-(function (root) {
+(function (root, factory) {
   'use strict';
-  var C = root.SCCore;
-  var Store = root.SCStore;
+  if (typeof module === 'object' && module.exports) {
+    module.exports = factory(require('./core.js'), require('./store.js'));
+  } else {
+    root.SCSync = factory(root.SCCore, root.SCStore);
+  }
+})(typeof self !== 'undefined' ? self : this, function (C, Store) {
+  'use strict';
 
-  var KEY_CFG = 'cisnienie.sync.v1';
-  var API = 'https://api.github.com';
-  var DEFAULT_PATH = 'cisnienie-dane.json';
-  var TIMEOUT_MS = 20000;
-  var MAX_ATTEMPTS = 4;
+  var API = 'https://188-68-247-201.sslip.io/cisnienie-api';
+  var KEY = 'cisnienie.konto.v1';
+  var TIMEOUT = 20000;
+
+  var hooks = null;
+  var status = { state: 'off', lastSync: 0, error: '', code: '' };
+  var running = false, again = false, timer = null, retryTimer = null, retryDelay = 5000;
 
   function SyncError(code, message) {
     var e = new Error(message);
@@ -25,447 +33,211 @@
     return e;
   }
 
-  /* ---------- Konfiguracja ---------- */
+  /* ---------- konto zapisane na urządzeniu ---------- */
 
-  function loadConfig() {
-    var raw = Store.lsGet(KEY_CFG);
+  function loadAccount() {
+    var raw = Store.lsGet(KEY);
     if (!raw) return null;
     try {
-      var c = JSON.parse(raw);
-      if (c && typeof c.owner === 'string' && typeof c.repo === 'string' && typeof c.token === 'string' && c.token) {
-        return {
-          owner: c.owner, repo: c.repo, branch: c.branch || '', path: c.path || DEFAULT_PATH,
-          token: c.token, lastSync: Number(c.lastSync) || 0, public: c.public === true
-        };
+      var o = JSON.parse(raw);
+      if (o && typeof o.token === 'string' && o.token && typeof o.login === 'string') {
+        return { token: o.token, login: o.login, imie: typeof o.imie === 'string' ? o.imie : '', lastSync: +o.lastSync || 0, zmienione: +o.zmienione || 0 };
       }
-    } catch (e) { /* uszkodzona konfiguracja */ }
+    } catch (e) { /* uszkodzony zapis */ }
     return null;
   }
 
-  function saveConfig(cfg) {
-    return Store.lsSet(KEY_CFG, JSON.stringify(cfg));
+  function saveAccount(a) { return Store.lsSet(KEY, JSON.stringify(a)); }
+
+  function getAccount() {
+    var a = loadAccount();
+    return a ? { login: a.login, imie: a.imie, lastSync: a.lastSync } : null;
   }
 
-  function clearConfig() {
-    try { localStorage.removeItem(KEY_CFG); } catch (e) { /* ignoruj */ }
+  function strefa() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Warsaw'; } catch (e) { return 'Europe/Warsaw'; }
   }
 
-  /** Przyjmuje „login/repo” albo adres https://github.com/login/repo(.git) */
-  function parseRepo(text) {
-    var s = String(text || '').trim().replace(/\.git$/i, '').replace(/\/+$/, '');
-    s = s.replace(/^https?:\/\/(www\.)?github\.com\//i, '');
-    var m = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})$/.exec(s);
-    return m ? { owner: m[1], repo: m[2] } : null;
+  function urzadzenie() {
+    var ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+    if (/iPhone/.test(ua)) return 'iPhone';
+    if (/iPad/.test(ua)) return 'iPad';
+    if (/Android/.test(ua)) return 'Android';
+    if (/Windows/.test(ua)) return 'Windows';
+    if (/Mac/.test(ua)) return 'Mac';
+    return 'urządzenie';
   }
 
-  /* ---------- Base64 (UTF-8) ---------- */
+  /* ---------- zapytania do serwera ---------- */
 
-  function toB64(str) {
-    var bytes = new TextEncoder().encode(str);
-    var bin = '';
-    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-    return btoa(bin);
-  }
-
-  function fromB64(b64) {
-    var bin = atob(String(b64).replace(/\s/g, ''));
-    var bytes = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return new TextDecoder().decode(bytes);
-  }
-
-  /* ---------- Warstwa HTTP ---------- */
-
-  function request(cfg, method, path, body) {
-    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, TIMEOUT_MS) : null;
-    var headers = {
-      'Accept': 'application/vnd.github+json',
-      'Authorization': 'Bearer ' + cfg.token,
-      'X-GitHub-Api-Version': '2022-11-28'
-    };
-    var init = { method: method, headers: headers, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' };
-    if (body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
+  /** Zapytanie do serwera. auth = true dołącza token konta. Zwraca Promise<json>. */
+  function req(path, opts) {
+    opts = opts || {};
+    var a = loadAccount();
+    var headers = { 'Content-Type': 'application/json' };
+    if (opts.auth !== false) {
+      if (!a) return Promise.reject(SyncError('auth', 'Zaloguj się.'));
+      headers.Authorization = 'Bearer ' + a.token;
     }
-    if (ctrl) init.signal = ctrl.signal;
-    return fetch(API + path, init).then(function (res) {
-      if (timer) clearTimeout(timer);
-      return res.text().then(function (text) {
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var t = ctrl ? setTimeout(function () { ctrl.abort(); }, TIMEOUT) : null;
+    return fetch(API + path, {
+      method: opts.method || 'GET', headers: headers, cache: 'no-store',
+      body: opts.body ? JSON.stringify(opts.body) : undefined, signal: ctrl ? ctrl.signal : undefined
+    }).then(function (res) {
+      if (t) clearTimeout(t);
+      return res.text().then(function (txt) {
         var json = null;
-        try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
-        return { status: res.status, json: json, headers: res.headers };
+        try { json = txt ? JSON.parse(txt) : null; } catch (e) { json = null; }
+        if (res.ok) return json || {};
+        var msg = json && json.blad ? json.blad : 'Serwer odpowiedział błędem (' + res.status + ').';
+        if (res.status === 401 && opts.auth !== false) {
+          Store.lsSet(KEY, '');
+          if (hooks && hooks.onAuthLost) hooks.onAuthLost(msg);
+          throw SyncError('auth', msg);
+        }
+        if (res.status === 429) throw SyncError('rate', msg);
+        if (res.status >= 500) throw SyncError('server', 'Serwer chwilowo nie odpowiada. Spróbuję ponownie.');
+        throw SyncError('other', msg);
       });
     }, function () {
-      if (timer) clearTimeout(timer);
-      throw SyncError('offline', 'Brak połączenia z GitHubem.');
+      if (t) clearTimeout(t);
+      throw SyncError('offline', 'Brak połączenia z internetem.');
     });
   }
 
-  function failFromStatus(res) {
-    var s = res.status;
-    var msg = res.json && res.json.message ? String(res.json.message) : '';
-    if (s === 401) return SyncError('auth', 'Token jest nieprawidłowy albo wygasł. Utwórz nowy token.');
-    if (s === 403 || s === 429) {
-      if (res.headers && res.headers.get('x-ratelimit-remaining') === '0') {
-        return SyncError('rate', 'Limit zapytań GitHuba został chwilowo wyczerpany. Spróbuj za kilka minut.');
-      }
-      return SyncError('perm', 'Token nie ma uprawnień do zapisu. Potrzebne jest „Contents: Read and write” dla tego repozytorium.');
-    }
-    if (s === 404) return SyncError('notfound', 'Nie znaleziono repozytorium. Sprawdź nazwę i to, czy token ma do niego dostęp.');
-    if (s >= 500) return SyncError('server', 'GitHub ma chwilowe problemy. Spróbuj ponownie za chwilę.');
-    return SyncError('other', 'GitHub zwrócił błąd ' + s + (msg ? ' (' + msg + ')' : '') + '.');
-  }
+  /* ---------- stan ---------- */
 
-  function contentsPath(cfg) {
-    return '/repos/' + encodeURIComponent(cfg.owner) + '/' + encodeURIComponent(cfg.repo) +
-      '/contents/' + cfg.path.split('/').map(encodeURIComponent).join('/');
-  }
-
-  /* ---------- Test połączenia ---------- */
-
-  /**
-   * Sprawdza repozytorium i token. Odmawia pracy z repozytorium PUBLICZNYM (dane o zdrowiu muszą być prywatne).
-   * Zwraca Promise<{branch}> albo odrzuca SyncError.
-   */
-  function testConnection(cfg, opts) {
-    opts = opts || {};
-    var base = '/repos/' + encodeURIComponent(cfg.owner) + '/' + encodeURIComponent(cfg.repo);
-    return request(cfg, 'GET', base).then(function (res) {
-      if (res.status !== 200) throw failFromStatus(res);
-      var repo = res.json || {};
-      if (repo.private !== true && !opts.allowPublic) {
-        throw SyncError('public', 'To repozytorium jest PUBLICZNE. Dane o zdrowiu muszą być w repozytorium prywatnym. Utwórz nowe repozytorium z opcją „Private”.');
-      }
-      if (repo.permissions && repo.permissions.push === false) {
-        throw SyncError('perm', 'Token nie ma uprawnień do zapisu. Potrzebne jest „Contents: Read and write” dla tego repozytorium.');
-      }
-      var branch = cfg.branch || repo.default_branch || 'main';
-      var specified = !!cfg.branch;
-      return request(cfg, 'GET', base + '/branches/' + encodeURIComponent(branch)).then(function (b) {
-        if (specified && (b.status === 404 || b.status === 409)) {
-          throw SyncError('nobranch', 'W tym repozytorium nie ma gałęzi „' + branch + '”. Utwórz ją na GitHubie (lista gałęzi, wpisz nazwę, „Create branch”) i spróbuj ponownie.');
-        }
-        if (b.status === 404 || b.status === 409) {
-          throw SyncError('empty', 'Repozytorium jest puste. Dodaj do niego dowolny plik (np. README) i spróbuj ponownie.');
-        }
-        if (b.status !== 200) throw failFromStatus(b);
-        return { branch: branch, isPublic: repo.private !== true };
-      });
-    });
-  }
-
-  /* ---------- Jedna synchronizacja ---------- */
-
-  function pullPush(cfg, local, attempt) {
-    var ref = cfg.branch ? '?ref=' + encodeURIComponent(cfg.branch) : '';
-    return request(cfg, 'GET', contentsPath(cfg) + ref).then(function (res) {
-      var remote = C.emptyData();
-      var sha = null;
-      var remoteText = '';
-      if (res.status === 200 && res.json && typeof res.json.content === 'string') {
-        sha = res.json.sha;
-        remoteText = fromB64(res.json.content);
-        var parsed = C.parseSerialized(remoteText);
-        if (parsed.error) {
-          throw SyncError('corrupt', 'Plik kopii na GitHubie jest uszkodzony. Nic nie zostało nadpisane. Sprawdź plik w repozytorium.');
-        }
-        remote = parsed.data;
-      } else if (res.status === 404) {
-        sha = null; // pliku jeszcze nie ma – zostanie utworzony
-      } else {
-        throw failFromStatus(res);
-      }
-
-      var merged = C.merge(local, remote);
-      var newText = C.serialize(merged);
-      var remoteCanonical = sha ? C.serialize(remote) : null;
-      var needPush = remoteCanonical !== newText;
-      var changedLocal = !C.sameData(merged, local);
-
-      if (!needPush) return { data: merged, changedLocal: changedLocal, pushed: false };
-
-      var now = new Date();
-      var body = {
-        message: 'Ciśnienie: kopia ' + C.todayKey(now) + ' ' + ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2) +
-          ' (' + C.countReadings(merged) + ' ' + C.plural(C.countReadings(merged), 'pomiar', 'pomiary', 'pomiarów') + ')',
-        content: toB64(newText)
-      };
-      if (cfg.branch) body.branch = cfg.branch;
-      if (sha) body.sha = sha;
-      return request(cfg, 'PUT', contentsPath(cfg), body).then(function (put) {
-        if (put.status === 200 || put.status === 201) {
-          return { data: merged, changedLocal: changedLocal, pushed: true };
-        }
-        if ((put.status === 409 || put.status === 422) && attempt < MAX_ATTEMPTS) {
-          // ktoś zmienił plik w międzyczasie – pobierz jeszcze raz i scal
-          return pullPush(cfg, merged, attempt + 1);
-        }
-        throw failFromStatus(put);
-      });
-    });
-  }
-
-  /* ---------- Silnik z kolejką i statusem ---------- */
-
-  var hooks = null;
-  var running = false;
-  var again = false;
-  var timer = null;
-  var retryTimer = null;
-  var status = { state: 'off', lastSync: 0, error: '', code: '' };
-
-  function setStatus(patch) {
-    for (var k in patch) status[k] = patch[k];
+  function setStatus(s) {
+    Object.keys(s).forEach(function (k) { status[k] = s[k]; });
     if (hooks && hooks.onStatus) hooks.onStatus(Object.assign({}, status));
+  }
+
+  function getStatus() { return Object.assign({}, status); }
+
+  /* ---------- konto ---------- */
+
+  function afterAuth(r) {
+    if (!r || !r.token) throw SyncError('other', 'Serwer nie potwierdził logowania.');
+    saveAccount({ token: r.token, login: r.konto.login, imie: r.konto.imie || '', lastSync: 0, zmienione: 0 });
+    Store.setDirty(true); // pomiary z urządzenia (jeśli są) trafią na konto
+    setStatus({ state: 'pending', error: '', code: '' });
+    return run().then(function () { return getAccount(); });
+  }
+
+  function register(o) {
+    return req('/rejestracja', { method: 'POST', auth: false, body: { login: o.login, haslo: o.haslo, imie: o.imie, kod: o.kod, tz: strefa(), urzadzenie: urzadzenie() } }).then(afterAuth);
+  }
+
+  function login(o) {
+    return req('/logowanie', { method: 'POST', auth: false, body: { login: o.login, haslo: o.haslo, urzadzenie: urzadzenie() } }).then(afterAuth);
+  }
+
+  /** Wylogowanie z tego urządzenia (sesja na serwerze jest usuwana, gdy jest internet). */
+  function logout() {
+    var done = function () {
+      Store.lsSet(KEY, '');
+      Store.setDirty(false);
+      setStatus({ state: 'off', lastSync: 0, error: '', code: '' });
+    };
+    if (!loadAccount()) { done(); return Promise.resolve(); }
+    return req('/wyloguj', { method: 'POST' }).then(done, done);
+  }
+
+  function changePassword(stare, nowe) { return req('/haslo', { method: 'POST', body: { stare: stare, nowe: nowe } }); }
+
+  function deleteAccount(haslo) {
+    return req('/konto', { method: 'DELETE', body: { haslo: haslo } }).then(function () {
+      Store.lsSet(KEY, '');
+      Store.setDirty(false);
+      setStatus({ state: 'off', lastSync: 0, error: '', code: '' });
+    });
+  }
+
+  /* ---------- synchronizacja ---------- */
+
+  function scheduleRetry() {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(function () { retryDelay = Math.min(retryDelay * 2, 5 * 60 * 1000); run(); }, retryDelay);
+  }
+
+  function applyServer(dane) {
+    var remote = C.validate(dane || {}).data;
+    var local = hooks.getData();
+    var merged = C.merge(local, remote);
+    if (!C.sameData(merged, local)) hooks.applyRemote(remote);
+  }
+
+  /** Wysyła dane urządzenia i scala z serwerem. */
+  function run() {
+    var a = loadAccount();
+    if (!a || !hooks) { setStatus({ state: 'off' }); return Promise.resolve(); }
+    if (running) { again = true; return Promise.resolve(); }
+    running = true;
+    setStatus({ state: 'syncing', error: '', code: '' });
+    var startVersion = hooks.getVersion();
+    return req('/dane', { method: 'POST', body: { dane: JSON.parse(C.serialize(hooks.getData())), tz: strefa() } }).then(function (r) {
+      applyServer(r.dane);
+      var cur = loadAccount();
+      if (cur) { cur.lastSync = Date.now(); cur.zmienione = r.zmienione || 0; saveAccount(cur); }
+      if (hooks.getVersion() === startVersion) Store.setDirty(false);
+      retryDelay = 5000;
+      setStatus({ state: Store.isDirty() ? 'pending' : 'synced', lastSync: cur ? cur.lastSync : 0, error: '', code: '' });
+    }).catch(function (e) {
+      var code = e && e.code ? e.code : 'other';
+      if (code === 'auth') { setStatus({ state: 'off', error: '', code: code }); return; }
+      if (code === 'offline' || code === 'server' || code === 'rate') {
+        setStatus({ state: 'pending', error: code === 'offline' ? 'Brak internetu. Pomiary wyślą się same, gdy wróci połączenie.' : e.message, code: code });
+        scheduleRetry();
+      } else {
+        setStatus({ state: 'error', error: e && e.message ? e.message : 'Nie udało się zapisać na serwerze.', code: code });
+      }
+    }).then(function () {
+      running = false;
+      if (again) { again = false; schedule(300); }
+    });
+  }
+
+  /** Wysyłka chwilę po zmianie (kilka szybkich zmian = jedna wysyłka). */
+  function schedule(delay) {
+    if (!loadAccount()) return;
+    clearTimeout(timer);
+    timer = setTimeout(run, delay == null ? 1200 : delay);
+  }
+
+  /** Ciche sprawdzenie, czy inne urządzenie tej osoby coś dodało (co minutę, gdy aplikacja jest otwarta). */
+  function poll() {
+    var a = loadAccount();
+    if (!a || running) return Promise.resolve();
+    if (Store.isDirty()) return run();
+    return req('/dane?znane=' + encodeURIComponent(a.zmienione || 0)).then(function (r) {
+      if (!r.zmiana) return;
+      applyServer(r.dane);
+      var cur = loadAccount();
+      if (cur) { cur.zmienione = r.zmienione || 0; cur.lastSync = Date.now(); saveAccount(cur); setStatus({ state: 'synced', lastSync: cur.lastSync, error: '', code: '' }); }
+    }, function () { /* spróbuje przy następnym sprawdzeniu */ });
   }
 
   function init(h) {
     hooks = h;
-    root.addEventListener('online', function () { requestRun(300); });
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') maybePullOnFocus();
-    });
-    var cfg = loadConfig();
-    if (!cfg) {
-      setStatus({ state: 'off' });
-      return;
+    var a = loadAccount();
+    setStatus(a ? { state: Store.isDirty() ? 'pending' : 'synced', lastSync: a.lastSync } : { state: 'off' });
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('online', function () { if (loadAccount()) run(); });
     }
-    setStatus({ state: Store.isDirty() ? 'pending' : 'synced', lastSync: cfg.lastSync, error: '', code: '' });
   }
 
-  var lastAttempt = 0;
-  function maybePullOnFocus() {
-    if (!loadConfig()) return;
-    if (Date.now() - lastAttempt > 30000 || Store.isDirty()) requestRun(200);
-  }
+  /* ---------- przypomnienia (push) ---------- */
 
-  function requestRun(delay) {
-    if (!loadConfig()) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(run, delay == null ? 800 : delay);
-  }
+  function pushKey() { return req('/vapid', { auth: false }).then(function (r) { return r.klucz; }); }
+  function savePush(sub) { return req('/push', { method: 'POST', body: { sub: sub } }); }
+  function deletePush() { return req('/push', { method: 'DELETE' }); }
+  function testPush() { return req('/push/test', { method: 'POST' }); }
 
-  /** Planuje synchronizację (zbija kilka szybkich zmian w jedną). */
-  function schedule(delay) {
-    if (!loadConfig()) return;
-    if (!status.state || status.state === 'synced') setStatus({ state: 'pending' });
-    requestRun(delay);
-  }
-
-  function scheduleRetry() {
-    if (retryTimer) clearTimeout(retryTimer);
-    retryTimer = setTimeout(function () { if (Store.isDirty() || status.state === 'pending') run(); }, 30000);
-  }
-
-  function run() {
-    var cfg = loadConfig();
-    if (!cfg) { setStatus({ state: 'off' }); return Promise.resolve(); }
-    if (running) { again = true; return Promise.resolve(); }
-    // navigator.onLine bywa błędnie „false” (np. iPhone po wznowieniu aplikacji), więc zawsze próbujemy wysłać – błąd sieci i tak jest obsłużony niżej
-    running = true;
-    lastAttempt = Date.now();
-    setStatus({ state: 'syncing', error: '', code: '' });
-    var startVersion = hooks.getVersion();
-    return pullPush(cfg, hooks.getData(), 1).then(function (r) {
-      if (r.changedLocal) hooks.applyRemote(r.data);
-      cfg.lastSync = Date.now();
-      saveConfig(cfg);
-      // flaga „niewysłane zmiany” znika tylko wtedy, gdy w trakcie wysyłki nie zapisano nic nowego
-      if (hooks.getVersion() === startVersion) Store.setDirty(false);
-      setStatus({ state: Store.isDirty() ? 'pending' : 'synced', lastSync: cfg.lastSync, error: '', code: '' });
-      if (hooks.onSynced) hooks.onSynced(r);
-    }).catch(function (e) {
-      var code = e && e.code ? e.code : 'other';
-      var msg = e && e.name === 'SyncError' ? e.message : 'Nie udało się wysłać kopii.';
-      if (code === 'offline') {
-        setStatus({ state: 'pending', error: 'Brak połączenia. Kopia zostanie wysłana, gdy wróci internet.', code: code });
-        scheduleRetry();
-      } else if (code === 'server' || code === 'rate') {
-        setStatus({ state: 'pending', error: msg, code: code });
-        scheduleRetry();
-      } else {
-        setStatus({ state: 'error', error: msg, code: code });
-      }
-    }).then(function () {
-      running = false;
-      if (again) { again = false; requestRun(300); }
-    });
-  }
-
-
-  /**
-   * Ciche sprawdzenie, czy na GitHubie są nowsze dane (wywoływane co minutę, gdy aplikacja jest otwarta).
-   * Nie zmienia paska stanu, dopóki nic się nie zmieni, więc nie miga i nie odświeża ekranu bez powodu.
-   */
-  function poll() {
-    var cfg = loadConfig();
-    if (!cfg || !hooks) return Promise.resolve();
-    if (running) return Promise.resolve();
-    if (Store.isDirty()) { requestRun(100); return Promise.resolve(); }
-    running = true;
-    lastAttempt = Date.now();
-    var startVersion = hooks.getVersion();
-    return pullPush(cfg, hooks.getData(), 1).then(function (r) {
-      if (r.changedLocal) hooks.applyRemote(r.data);
-      var wasOk = status.state === 'synced';
-      if (r.changedLocal || r.pushed || !wasOk) {
-        cfg.lastSync = Date.now();
-        saveConfig(cfg);
-        if (hooks.getVersion() === startVersion) Store.setDirty(false);
-        setStatus({ state: Store.isDirty() ? 'pending' : 'synced', lastSync: cfg.lastSync, error: '', code: '' });
-      }
-    }).catch(function (e) {
-      var code = e && e.code ? e.code : 'other';
-      if (code === 'offline' || code === 'server' || code === 'rate') return; // chwilowe, bez alarmu
-      var msg = e && e.name === 'SyncError' ? e.message : 'Nie udało się sprawdzić kopii.';
-      if (status.state !== 'error' || status.code !== code) setStatus({ state: 'error', error: msg, code: code });
-    }).then(function () {
-      running = false;
-      if (again) { again = false; requestRun(300); }
-    });
-  }
-
-  /* ---------- Powiadomienia: lista telefonów w repozytorium ---------- */
-
-  var PUSH_PATH = 'push-subskrypcje.json';
-  var MAX_SUBS = 10;
-
-  function validSub(s) {
-    return !!s && typeof s.endpoint === 'string' && /^https:\/\//.test(s.endpoint) &&
-      !!s.keys && typeof s.keys.p256dh === 'string' && typeof s.keys.auth === 'string';
-  }
-
-  /**
-   * Zmienia listę zapisanych telefonów (plik obok danych, na tej samej gałęzi). mutator(lista) → nowa lista.
-   * Przy równoległej zmianie z innego urządzenia pobiera plik jeszcze raz.
-   */
-  function updateSubscriptions(mutator) {
-    var cfg = loadConfig();
-    if (!cfg) return Promise.reject(SyncError('nocfg', 'Najpierw włącz kopię na GitHubie.'));
-    var pc = { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: PUSH_PATH, token: cfg.token };
-    var ref = cfg.branch ? '?ref=' + encodeURIComponent(cfg.branch) : '';
-    function attempt(n) {
-      return request(pc, 'GET', contentsPath(pc) + ref).then(function (res) {
-        var sha = null, list = [];
-        if (res.status === 200 && res.json && typeof res.json.content === 'string') {
-          sha = res.json.sha;
-          try {
-            var j = JSON.parse(fromB64(res.json.content));
-            if (j && Array.isArray(j.subs)) list = j.subs.filter(validSub);
-          } catch (e) {
-            throw SyncError('corrupt', 'Plik z listą powiadomień na GitHubie jest uszkodzony.');
-          }
-        } else if (res.status !== 404) {
-          throw failFromStatus(res);
-        }
-        var next = mutator(list.slice());
-        if (JSON.stringify(next) === JSON.stringify(list) && (sha || !next.length)) return true;
-        var body = {
-          message: 'Ciśnienie: powiadomienia (' + next.length + ' ' + C.plural(next.length, 'urządzenie', 'urządzenia', 'urządzeń') + ')',
-          content: toB64(JSON.stringify({ v: 1, subs: next }, null, 2) + '\n')
-        };
-        if (pc.branch) body.branch = pc.branch;
-        if (sha) body.sha = sha;
-        return request(pc, 'PUT', contentsPath(pc), body).then(function (put) {
-          if (put.status === 200 || put.status === 201) return true;
-          if ((put.status === 409 || put.status === 422) && n < MAX_ATTEMPTS) return attempt(n + 1);
-          throw failFromStatus(put);
-        });
-      });
-    }
-    return attempt(1);
-  }
-
-  /** Zapisuje telefon do powiadomień (sub: { endpoint, keys: { p256dh, auth } }). */
-  function addSubscription(sub, label) {
-    var rec = { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth }, t: Date.now(), label: String(label || '').slice(0, 40) };
-    if (!validSub(rec)) return Promise.reject(SyncError('other', 'Nieprawidłowa subskrypcja powiadomień.'));
-    return updateSubscriptions(function (list) {
-      var out = list.filter(function (s) { return s.endpoint !== rec.endpoint; });
-      out.push(rec);
-      return out.slice(-MAX_SUBS);
-    });
-  }
-
-  function removeSubscription(endpoint) {
-    return updateSubscriptions(function (list) {
-      return list.filter(function (s) { return s.endpoint !== endpoint; });
-    });
-  }
-
-  /** Łączy z repozytorium: sprawdza dostęp i robi pierwszą synchronizację. Repozytorium musi być prywatne. */
-  function connect(owner, repo, token) {
-    var cfg = {
-      owner: owner, repo: repo, branch: '', path: DEFAULT_PATH,
-      token: String(token || '').trim(), lastSync: 0, public: false
-    };
-    if (!cfg.token) return Promise.reject(SyncError('auth', 'Wklej token dostępu.'));
-    return testConnection(cfg, {}).then(function (info) {
-      cfg.branch = info.branch;
-      saveConfig(cfg);
-      Store.setDirty(true);
-      setStatus({ state: 'pending', error: '', code: '' });
-      return run();
-    }).then(function () {
-      if (status.state === 'error') throw SyncError(status.code, status.error);
-      return true;
-    });
-  }
-
-  /* ---------- Zadanie przypomnień w repozytorium z danymi ---------- */
-
-  var WORKFLOW_PATH = '.github/workflows/przypomnienia.yml';
-
-  /**
-   * Zapisuje (albo aktualizuje) plik zadania GitHub Actions, które wysyła przypomnienia.
-   * Wymaga tokenu z uprawnieniem „Workflows: Read and write”. Zwraca Promise<'created'|'updated'|'same'>.
-   */
-  function ensureWorkflow(text) {
-    var cfg = loadConfig();
-    if (!cfg) return Promise.reject(SyncError('nocfg', 'Najpierw włącz kopię na GitHubie.'));
-    var wc = { owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, path: WORKFLOW_PATH, token: cfg.token };
-    var ref = wc.branch ? '?ref=' + encodeURIComponent(wc.branch) : '';
-    return request(wc, 'GET', contentsPath(wc) + ref).then(function (res) {
-      var sha = null;
-      if (res.status === 200 && res.json && typeof res.json.content === 'string') {
-        sha = res.json.sha;
-        if (fromB64(res.json.content) === text) return 'same';
-      } else if (res.status !== 404) {
-        throw failFromStatus(res);
-      }
-      var body = { message: 'Ciśnienie: zadanie przypomnień', content: toB64(text) };
-      if (wc.branch) body.branch = wc.branch;
-      if (sha) body.sha = sha;
-      return request(wc, 'PUT', contentsPath(wc), body).then(function (put) {
-        if (put.status === 200 || put.status === 201) return sha ? 'updated' : 'created';
-        if (put.status === 403 || put.status === 404) {
-          throw SyncError('workflow', 'Token nie może zapisać zadania przypomnień. Na GitHubie edytuj token i w „Repository permissions” ustaw także „Workflows: Read and write”, a potem spróbuj ponownie.');
-        }
-        throw failFromStatus(put);
-      });
-    });
-  }
-
-  function disconnect() {
-    clearConfig();
-    if (timer) clearTimeout(timer);
-    if (retryTimer) clearTimeout(retryTimer);
-    setStatus({ state: 'off', lastSync: 0, error: '', code: '' });
-  }
-
-  function getStatus() { return Object.assign({}, status); }
-  function getConfigPublic() {
-    var c = loadConfig();
-    return c ? { owner: c.owner, repo: c.repo, branch: c.branch, path: c.path, public: c.public } : null;
-  }
-
-  root.SCSync = {
-    init: init, schedule: schedule, run: run, poll: poll, connect: connect, disconnect: disconnect,
-    addSubscription: addSubscription, removeSubscription: removeSubscription, ensureWorkflow: ensureWorkflow,
-    getStatus: getStatus, getConfig: getConfigPublic, parseRepo: parseRepo,
-    // udostępnione do testów
-    _pullPush: pullPush, _toB64: toB64, _fromB64: fromB64
+  return {
+    API: API, init: init, getAccount: getAccount, register: register, login: login, logout: logout,
+    changePassword: changePassword, deleteAccount: deleteAccount,
+    run: run, schedule: schedule, poll: poll, getStatus: getStatus,
+    pushKey: pushKey, savePush: savePush, deletePush: deletePush, testPush: testPush
   };
-})(typeof self !== 'undefined' ? self : this);
+});

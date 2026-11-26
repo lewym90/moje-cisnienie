@@ -6,11 +6,7 @@
   var Store = window.SCStore;
   var Sync = window.SCSync;
   var APP_NAME = 'Ciśnienie';
-  var APP_VERSION = '1.1.0';
-  // repozytorium z kodem aplikacji (zadanie przypomnień pobiera z niego skrypt); na GitHub Pages ustalane z adresu strony
-  var DEFAULT_CODE_REPO = 'lewym90/moje-cisnienie';
-  // klucz publiczny powiadomień; klucz prywatny jest tylko w sekrecie VAPID_PRIVATE_KEY repozytorium z danymi
-  var VAPID_PUBLIC = 'BEahPklFMcijRTytaw3_t_eqw_KAWEt2w-Yx6X01DJsXP9KDMIyu82wdaW19ilM1b5xZ4yk573hlfqOfwlWt_ew';
+  var APP_VERSION = '1.2.0';
 
   /* ---------- Narzędzia ---------- */
 
@@ -80,6 +76,8 @@
     today: C.todayKey(),
     hist: { y: p0.y, m: p0.m },
     period: 'd7',
+    authMode: 'register',
+    authBusy: false,
     push: { status: 'checking', busy: false, error: '' },
     version: 0,
     sync: { state: 'off', lastSync: 0, error: '', code: '' },
@@ -313,11 +311,11 @@
   function pillInfo() {
     var s = state.sync;
     if (!state.storageOk) return { cls: 'error', text: 'Błąd zapisu' };
-    if (s.state === 'off') return { cls: 'off', text: 'Kopia wyłączona' };
-    if (s.state === 'syncing') return { cls: 'pending syncing', text: 'Wysyłam kopię…' };
-    if (s.state === 'pending') return { cls: 'pending', text: 'Kopia czeka' };
-    if (s.state === 'error') return { cls: 'error', text: 'Kopia: uwaga' };
-    return { cls: 'ok', text: 'Kopia zapisana' + (s.lastSync ? ' · ' + timeOf(s.lastSync) : '') };
+    if (s.state === 'off') return { cls: 'off', text: 'Nie zalogowano' };
+    if (s.state === 'syncing') return { cls: 'pending syncing', text: 'Zapisuję…' };
+    if (s.state === 'pending') return { cls: 'pending', text: 'Czeka na wysłanie' };
+    if (s.state === 'error') return { cls: 'error', text: 'Zapis: uwaga' };
+    return { cls: 'ok', text: 'Zapisano na koncie' + (s.lastSync ? ' · ' + timeOf(s.lastSync) : '') };
   }
 
   function pillHtml() {
@@ -361,9 +359,9 @@
         'Przeglądarka blokuje zapis (np. tryb prywatny). Pobierz kopię w Profilu i nie zamykaj aplikacji.</div></div>';
     }
     if (s.state === 'error') {
-      h += '<div class="banner error">' + icon('alert') + '<div class="grow"><strong>Kopia na GitHubie nie działa</strong>' + esc(s.error) +
+      h += '<div class="banner error">' + icon('alert') + '<div class="grow"><strong>Pomiary nie zapisują się na serwerze</strong>' + esc(s.error) +
         '<div class="btn-row"><button class="btn small" data-action="sync-now">Spróbuj ponownie</button>' +
-        '<button class="btn small ghost" data-action="goto-backup">Ustawienia kopii</button></div></div></div>';
+        '<button class="btn small ghost" data-action="goto-backup">Konto</button></div></div></div>';
     } else if (s.state === 'pending' && s.error) {
       h += '<div class="banner warn">' + icon('info') + '<div class="grow"><strong>Kopia czeka na wysłanie</strong>' + esc(s.error) +
         ' Pomiary są bezpieczne na tym urządzeniu.</div></div>';
@@ -670,10 +668,7 @@
       hours.map(function (hh) { return '<option value="' + hh + '"' + (value === hh ? ' selected' : '') + '>' + C.pad(hh) + ':00</option>'; }).join('') + '</select>';
   }
 
-  /* ----- Powiadomienia ----- */
-
-  var PUSH_EP_KEY = 'cisnienie.push.ep';
-  var WF_KEY = 'cisnienie.workflow';
+  /* ----- Powiadomienia (wysyła je serwer aplikacji, nic nie trzeba ustawiać) ----- */
 
   function isIosDevice() {
     var ua = navigator.userAgent || '';
@@ -688,8 +683,8 @@
     return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   }
 
-  function vapidKey() {
-    var b64 = VAPID_PUBLIC.replace(/-/g, '+').replace(/_/g, '/');
+  function b64key(s) {
+    var b64 = s.replace(/-/g, '+').replace(/_/g, '/');
     var bin = atob(b64 + '==='.slice((b64.length + 3) % 4));
     var out = new Uint8Array(bin.length);
     for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -703,42 +698,7 @@
     ]);
   }
 
-  function deviceLabel() {
-    var ua = navigator.userAgent || '';
-    if (/iPhone/.test(ua)) return 'iPhone';
-    if (/iPad/.test(ua)) return 'iPad';
-    if (/Android/.test(ua)) return 'Android';
-    if (/Windows/.test(ua)) return 'Windows';
-    if (/Mac/.test(ua)) return 'Mac';
-    return 'urządzenie';
-  }
-
-  /** Repozytorium z kodem aplikacji (z niego zadanie przypomnień pobiera skrypt). */
-  function codeRepo() {
-    var m = /^([A-Za-z0-9-]+)\.github\.io$/i.exec(location.hostname || '');
-    if (m) {
-      var seg = (location.pathname || '/').split('/').filter(Boolean)[0];
-      if (seg && !/\./.test(seg)) return m[1] + '/' + seg;
-      return m[1] + '/' + m[1] + '.github.io';
-    }
-    return DEFAULT_CODE_REPO;
-  }
-
-  function workflowText() {
-    return fetch('tools/przypomnienia.yml', { cache: 'no-store' }).then(function (r) {
-      if (!r.ok) throw new Error('Nie udało się pobrać zadania przypomnień. Sprawdź internet.');
-      return r.text();
-    }, function () { throw new Error('Brak internetu. Spróbuj ponownie po połączeniu.'); }).then(function (t) {
-      return t.split('__CODE_REPO__').join(codeRepo()).split('__VAPID_PUBLIC__').join(VAPID_PUBLIC);
-    });
-  }
-
-  function installWorkflow() {
-    return workflowText().then(function (t) { return Sync.ensureWorkflow(t); }).then(function (r) {
-      Store.lsSet(WF_KEY, APP_VERSION);
-      return r;
-    });
-  }
+  var PUSH_EP_KEY = 'cisnienie.push.ep';
 
   function refreshPushState() {
     var p = state.push;
@@ -752,70 +712,64 @@
     }).then(function (sub) {
       if (!sub || Notification.permission !== 'granted') { p.status = 'off'; return; }
       p.status = 'on';
-      if (!Sync.getConfig()) return;
-      var jobs = [];
-      if (Store.lsGet(PUSH_EP_KEY) !== sub.endpoint) {
-        jobs.push(Sync.addSubscription(sub.toJSON(), deviceLabel()).then(function () { Store.lsSet(PUSH_EP_KEY, sub.endpoint); }, function () { /* przy następnym uruchomieniu */ }));
+      // po ponownym zalogowaniu albo zmianie subskrypcji przez przeglądarkę – zgłoś ją serwerowi
+      if (Sync.getAccount() && Store.lsGet(PUSH_EP_KEY) !== sub.endpoint) {
+        return Sync.savePush(sub.toJSON()).then(function () { Store.lsSet(PUSH_EP_KEY, sub.endpoint); }, function () { /* następnym razem */ });
       }
-      // po aktualizacji aplikacji odśwież zadanie przypomnień w repozytorium (po cichu)
-      if (Store.lsGet(WF_KEY) !== APP_VERSION) jobs.push(installWorkflow().then(null, function () { /* spróbuje później */ }));
-      return Promise.all(jobs);
     }).catch(function () { p.status = 'off'; });
   }
 
   function afterPushChange() {
     state.push.busy = false;
-    if (state.view === 'settings') refresh();
+    if (state.view === 'settings' || state.view === 'home') refresh();
   }
 
   function enablePush() {
     var p = state.push;
     if (p.busy) return;
-    if (!Sync.getConfig()) {
-      showToast('Najpierw włącz kopię na GitHubie (sekcja wyżej). Przypomnienia wysyła Twoje repozytorium z danymi.', { kind: 'error' });
-      return;
-    }
     p.busy = true; p.error = '';
     refresh();
     // zgoda musi być poproszona od razu po dotknięciu przycisku
     Notification.requestPermission().then(function (perm) {
       if (perm !== 'granted') {
         p.status = perm === 'denied' ? 'denied' : 'off';
-        throw new Error(perm === 'denied' ? 'Powiadomienia są zablokowane w ustawieniach telefonu lub przeglądarki.' : 'Nie udzielono zgody na powiadomienia.');
+        throw new Error(perm === 'denied' ? 'Powiadomienia są zablokowane w ustawieniach telefonu.' : 'Nie udzielono zgody na powiadomienia.');
       }
-      return swReady();
-    }).then(function (reg) {
-      return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKey() });
-    }).then(function (sub) {
-      return installWorkflow().then(function () {
-        return Sync.addSubscription(sub.toJSON(), deviceLabel());
+      return Promise.all([swReady(), Sync.pushKey()]);
+    }).then(function (r) {
+      var reg = r[0], key = r[1];
+      return reg.pushManager.getSubscription().then(function (old) {
+        return old ? old.unsubscribe().then(null, function () {}) : null;
       }).then(function () {
+        return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64key(key) });
+      });
+    }).then(function (sub) {
+      return Sync.savePush(sub.toJSON()).then(function () {
         Store.lsSet(PUSH_EP_KEY, sub.endpoint);
         p.status = 'on';
         showToast('Przypomnienia włączone');
       }, function (e) {
-        // zapis w repozytorium się nie udał – wycofaj, żeby stan był spójny
         return sub.unsubscribe().then(null, function () {}).then(function () { throw e; });
       });
     }).then(afterPushChange, function (e) {
       p.error = e && e.message ? e.message : 'Nie udało się włączyć przypomnień.';
       if (p.status === 'on') p.status = 'off';
+      showToast(p.error, { kind: 'error' });
       afterPushChange();
     });
   }
 
-  function disablePush() {
+  function disablePush(silent) {
     var p = state.push;
-    if (p.busy) return;
+    if (p.busy) return Promise.resolve();
     p.busy = true; p.error = '';
-    refresh();
-    swReady().then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
-      if (!sub) return null;
-      var done = function () { Store.lsSet(PUSH_EP_KEY, ''); return sub.unsubscribe(); };
-      return Sync.getConfig() ? Sync.removeSubscription(sub.endpoint).then(done) : done();
+    if (!silent) refresh();
+    return swReady().then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+      var server = Sync.getAccount() ? Sync.deletePush().then(null, function () {}) : Promise.resolve();
+      return server.then(function () { Store.lsSet(PUSH_EP_KEY, ''); return sub ? sub.unsubscribe() : null; });
     }).then(function () {
       p.status = 'off';
-      showToast('Przypomnienia wyłączone na tym urządzeniu');
+      if (!silent) showToast('Przypomnienia wyłączone na tym urządzeniu');
       afterPushChange();
     }, function (e) {
       p.error = e && e.message ? e.message : 'Nie udało się wyłączyć przypomnień.';
@@ -824,75 +778,61 @@
   }
 
   function testPush() {
-    swReady().then(function (reg) {
-      return reg.showNotification(APP_NAME, {
-        body: 'Pora na wieczorny pomiar ciśnienia. Tak będzie wyglądać przypomnienie.',
-        icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', tag: 'cisnienie-test'
-      });
-    }).then(function () { showToast('Pokazano próbne powiadomienie'); }, function () {
-      showToast('Nie udało się pokazać powiadomienia na tym urządzeniu.', { kind: 'error' });
+    Sync.testPush().then(function () { showToast('Wysłano próbne przypomnienie'); }, function (e) {
+      showToast(e && e.message ? e.message : 'Nie udało się wysłać próbnego przypomnienia.', { kind: 'error' });
     });
   }
 
   function remindCard() {
     var p = state.push, c = cfg();
     var h = '<div class="card" id="push-card"><h2>' + icon('bell') + 'Przypomnienia o pomiarze</h2>' +
-      '<p class="help">Jeśli o wybranej godzinie nie będzie świeżego pomiaru (z ostatnich 2 godzin), telefon pokaże przypomnienie. Zwykle przychodzi w ciągu kilkunastu minut od tej godziny.</p>' +
+      '<p class="help">Jeśli o wybranej godzinie nie będzie świeżego pomiaru (z ostatnich 2 godzin), telefon pokaże przypomnienie. Godziny obowiązują na wszystkich Twoich urządzeniach.</p>' +
       '<div class="hours"><label class="hour">' + icon('sun') + '<span>Rano</span>' + hourSelect('rm-select', c.rm, C.RM_HOURS) + '</label>' +
       '<label class="hour">' + icon('moon') + '<span>Wieczorem</span>' + hourSelect('re-select', c.re, C.RE_HOURS) + '</label></div>';
     if (p.status === 'ios-install') {
-      h += '<p class="help">Na iPhonie powiadomienia działają po dodaniu aplikacji do ekranu początkowego (Safari → Udostępnij → „Do ekranu początkowego”) i wymagają iOS 16.4 lub nowszego. Otwórz aplikację z ikony i wróć tutaj.</p>';
+      h += '<div class="banner warn">' + icon('info') + '<div class="grow"><strong>Najpierw dodaj aplikację do ekranu</strong>Na iPhonie przypomnienia działają tylko w aplikacji dodanej do ekranu początkowego (iOS 16.4 lub nowszy): Safari → Udostępnij → „Do ekranu początkowego” → „Dodaj”. Potem otwórz Ciśnienie z ikony i wróć tutaj.</div></div>';
     } else if (p.status === 'unsupported') {
       h += '<p class="help">Ta przeglądarka nie obsługuje powiadomień z aplikacji.</p>';
     } else if (p.status === 'denied') {
-      h += '<div class="banner warn">' + icon('alert') + '<div class="grow">Powiadomienia są zablokowane w ustawieniach telefonu lub przeglądarki dla tej aplikacji. Zezwól na nie i wróć tutaj.</div></div>';
+      h += '<div class="banner warn">' + icon('alert') + '<div class="grow">Powiadomienia są zablokowane. iPhone: Ustawienia → Powiadomienia → Ciśnienie → Zezwalaj. Android: przytrzymaj ikonę → Informacje o aplikacji → Powiadomienia.</div></div>';
     } else if (p.status === 'on') {
-      h += '<div class="banner info">' + icon('check') + '<div class="grow"><strong>Włączone na tym urządzeniu</strong>Godziny wyżej obowiązują na wszystkich Twoich urządzeniach.</div></div>' +
-        '<div class="btn-row"><button class="btn small" data-action="push-test">Pokaż próbne powiadomienie</button>' +
+      h += '<div class="banner info">' + icon('check') + '<div class="grow"><strong>Włączone na tym urządzeniu</strong></div></div>' +
+        '<div class="btn-row"><button class="btn small" data-action="push-test">Wyślij próbne</button>' +
         '<button class="btn small danger" data-action="push-disable"' + (p.busy ? ' disabled' : '') + '>Wyłącz</button></div>';
     } else if (p.status === 'checking') {
       h += '<p class="help">Sprawdzam…</p>';
     } else {
-      if (!Sync.getConfig()) h += '<p class="help">Wymaga włączonej kopii na GitHubie (sekcja niżej). Przypomnienia wysyła Twoje prywatne repozytorium z danymi.</p>';
-      h += '<div class="btn-row"><button class="btn primary" data-action="push-enable"' + (p.busy ? ' disabled' : '') + '>' + icon('bell') + (p.busy ? 'Włączam…' : 'Włącz przypomnienia') + '</button></div>';
+      h += '<div class="btn-row"><button class="btn red" data-action="push-enable"' + (p.busy ? ' disabled' : '') + '>' + icon('bell') + (p.busy ? 'Włączam…' : 'Włącz przypomnienia') + '</button></div>';
     }
     if (p.error) h += '<p class="hint err" role="alert">' + esc(p.error) + '</p>';
-    h += '<details class="how"><summary>Jednorazowa konfiguracja (5 minut)</summary><ol>' +
-      '<li>Najpierw połącz kopię na GitHubie (sekcja „Kopia bezpieczeństwa”). Token musi mieć dwa uprawnienia: <b>Contents</b> i <b>Workflows</b>, oba „Read and write”.</li>' +
-      '<li>W repozytorium z danymi na GitHubie wejdź w <b>Settings</b> → <b>Secrets and variables</b> → <b>Actions</b> → <b>New repository secret</b>.</li>' +
-      '<li>W polu <b>Name</b> wpisz <code>VAPID_PRIVATE_KEY</code>, w polu <b>Secret</b> wklej klucz prywatny powiadomień i dotknij <b>Add secret</b>.</li>' +
-      '<li>Wróć tutaj i dotknij „Włącz przypomnienia”. Aplikacja sama doda do repozytorium zadanie, które co godzinę sprawdza, czy jest pomiar.</li>' +
-      '<li>Test: w repozytorium z danymi otwórz <b>Actions</b> → „Przypomnienia o pomiarze” → <b>Run workflow</b>, zaznacz „Wyślij próbne powiadomienie” i dotknij zielonego <b>Run workflow</b>.</li></ol></details>';
     return h + '</div>';
   }
 
-  function backupCard() {
+  /* ----- Konto ----- */
+
+  function accountCard() {
+    var a = Sync.getAccount();
     var s = state.sync;
-    var conf = Sync.getConfig();
-    var h = '<div class="card" id="backup"><h2>' + icon('shield') + 'Kopia bezpieczeństwa w GitHub</h2>';
-    if (!conf) {
-      h += '<p class="help">Po każdym pomiarze aplikacja wyśle kopię do Twojego <b>prywatnego</b> repozytorium. Dzięki temu pomiary są bezpieczne i takie same na telefonie, tablecie i komputerze.</p>';
-      h += '<div class="stack" id="connect-form">' +
-        '<div class="field"><label for="repo-input">Repozytorium (login/nazwa)</label><input id="repo-input" class="input" type="text" placeholder="lewym90/cisnienie-dane" autocomplete="off" autocapitalize="none" spellcheck="false"></div>' +
-        '<div class="field"><label for="token-input">Token dostępu</label><input id="token-input" class="input" type="password" placeholder="github_pat_…" autocomplete="off" autocapitalize="none" spellcheck="false"></div>' +
-        '<p class="hint err" id="connect-error" role="alert"></p>' +
-        '<div class="btn-row"><button class="btn primary" data-action="sync-connect">' + icon('shield') + 'Połącz i wyślij kopię</button></div></div>';
-      h += '<details class="how"><summary>Jak to ustawić (5 minut)</summary><ol>' +
-        '<li>Na <a href="https://github.com/new" target="_blank" rel="noopener noreferrer">github.com/new</a> wpisz nazwę, np. <code>cisnienie-dane</code>, wybierz <b>Private</b>, zaznacz „Add a README file” i dotknij <b>Create repository</b>.</li>' +
-        '<li>Otwórz <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">tworzenie tokenu</a>. Nazwa dowolna, np. „Dane ciśnienia”. <b>Expiration</b>: najdłuższy możliwy czas.</li>' +
-        '<li><b>Repository access</b> → „Only select repositories” → wybierz <code>cisnienie-dane</code>.</li>' +
-        '<li><b>Permissions</b> → „Repository permissions”: <b>Contents</b> → „Read and write” oraz <b>Workflows</b> → „Read and write” (to drugie jest dla przypomnień).</li>' +
-        '<li>Dotknij <b>Generate token</b>, skopiuj token i wklej go powyżej razem z nazwą repozytorium (login/nazwa). Na drugim urządzeniu wpisz to samo.</li></ol></details>';
-    } else {
-      var stateText = { synced: 'Kopia aktualna', pending: 'Czeka na wysłanie', syncing: 'Wysyłanie…', error: 'Wymaga uwagi', off: 'Wyłączona' }[s.state] || '';
-      h += '<div class="kv"><div><span>Repozytorium</span><b>' + esc(conf.owner + '/' + conf.repo) + '</b></div>' +
-        '<div><span>Stan</span><b>' + stateText + '</b></div>' +
-        '<div><span>Ostatnia kopia</span><b>' + (s.lastSync ? esc(new Date(s.lastSync).toLocaleString('pl-PL')) : '—') + '</b></div></div>';
-      if (s.error) h += '<div class="banner ' + (s.state === 'error' ? 'error' : 'warn') + '">' + icon('alert') + '<div class="grow">' + esc(s.error) + '</div></div>';
-      h += '<p class="help">Każda zmiana to osobny zapis w historii repozytorium, więc można wrócić do dowolnej wcześniejszej wersji.</p>';
-      h += '<div class="btn-row"><button class="btn primary" data-action="sync-now">' + icon('refresh') + 'Wyślij kopię teraz</button>' +
-        '<button class="btn danger" data-action="sync-disconnect">Odłącz</button></div>';
-    }
+    var stateText = { synced: 'Zapisane na serwerze', pending: 'Czeka na wysłanie', syncing: 'Wysyłanie…', error: 'Wymaga uwagi', off: '—' }[s.state] || '';
+    var h = '<div class="card" id="backup"><h2>' + icon('user') + 'Twoje konto</h2>' +
+      '<div class="kv"><div><span>Login</span><b>' + esc(a ? a.login : '—') + '</b></div>' +
+      '<div><span>Kopia pomiarów</span><b>' + stateText + '</b></div>' +
+      '<div><span>Ostatni zapis</span><b>' + (s.lastSync ? esc(new Date(s.lastSync).toLocaleString('pl-PL')) : '—') + '</b></div></div>';
+    if (s.error) h += '<div class="banner ' + (s.state === 'error' ? 'error' : 'warn') + '">' + icon('alert') + '<div class="grow">' + esc(s.error) + '</div></div>';
+    h += '<p class="help">Twoje pomiary widzisz tylko Ty. Na serwerze są zaszyfrowane i codziennie kopiowane. Na innym telefonie albo komputerze zaloguj się tym samym loginem i hasłem – pomiary pojawią się same.</p>' +
+      '<div class="btn-row"><button class="btn" data-action="sync-now">' + icon('refresh') + 'Zapisz teraz</button>' +
+      '<button class="btn" data-action="pass-open">Zmień hasło</button>' +
+      '<button class="btn danger" data-action="logout">Wyloguj</button></div>' +
+      '<div class="pass-form" id="pass-form" hidden>' +
+      '<div class="field"><label for="pass-old">Obecne hasło</label><input id="pass-old" class="input" type="password" autocomplete="current-password"></div>' +
+      '<div class="field"><label for="pass-new">Nowe hasło (min. 8 znaków)</label><input id="pass-new" class="input" type="password" autocomplete="new-password"></div>' +
+      '<p class="hint" id="pass-hint" role="alert"></p>' +
+      '<div class="btn-row"><button class="btn red" data-action="pass-save">Zapisz nowe hasło</button></div></div>' +
+      '<details class="how"><summary>Usuń konto i wszystkie pomiary</summary>' +
+      '<p class="help">Konto i wszystkie pomiary znikną z serwera i z tego urządzenia. Tego nie da się cofnąć. Jeśli chcesz zachować pomiary, najpierw pobierz kopię (sekcja „Twoje dane”).</p>' +
+      '<div class="field"><label for="del-pass">Hasło</label><input id="del-pass" class="input" type="password" autocomplete="current-password"></div>' +
+      '<p class="hint" id="del-hint" role="alert"></p>' +
+      '<div class="btn-row"><button class="btn danger" data-action="account-delete">Usuń konto na zawsze</button></div></details>';
     return h + '</div>';
   }
 
@@ -934,7 +874,7 @@
       '<div class="steppers">' + stepper('ts', c.ts, 'Skurczowe') + stepper('td', c.td, 'Rozkurczowe') + '</div>' +
       (c.ts !== 135 || c.td !== 85 ? '<div class="btn-row"><button class="btn small ghost" data-action="tgt-reset">Przywróć 135/85</button></div>' : '') + '</div>';
     h += remindCard();
-    h += backupCard();
+    h += accountCard();
     h += '<div class="card"><h2>Imię i nazwisko</h2><p class="help">Opcjonalnie. Pojawia się na raporcie dla lekarza i w powitaniu.</p>' +
       '<input id="name-input" class="input" type="text" maxlength="' + C.NAME_MAX + '" autocomplete="name" placeholder="np. Jan Kowalski" value="' + esc(c.nm) + '"></div>';
     h += '<div class="card"><h2>Wygląd</h2><p class="help">Automatycznie dopasowuje się do ustawień telefonu.</p>' +
@@ -1037,13 +977,14 @@
 
   /* ---------- Rysowanie ---------- */
 
-  var VIEWS = { home: homeView, history: historyView, charts: chartsView, settings: settingsView, tips: tipsView };
+  var VIEWS = { home: homeView, history: historyView, charts: chartsView, settings: settingsView, tips: tipsView, auth: authView };
 
   function renderView() {
     var v = $('view');
     if (!v) return;
     v.className = 'view view-' + state.view;
-    document.body.classList.toggle('on-home', state.view === 'home');
+    document.body.classList.toggle('on-home', state.view === 'home' || state.view === 'auth');
+    document.body.classList.toggle('no-nav', state.view === 'auth');
     v.innerHTML = VIEWS[state.view]();
     renderNav();
     renderPill();
@@ -1061,7 +1002,8 @@
   /** Odświeża bieżący widok, nie zmieniając przewijania i nie przerywając pisania w polu tekstowym. */
   function refresh() {
     var a = document.activeElement;
-    if (a && a.id && /^(repo-input|token-input|name-input)$/.test(a.id)) { renderPill(); state.deferred = true; return; }
+    if (state.view === 'auth') return;
+    if (a && a.id && /^(name-input|pass-old|pass-new|del-pass)$/.test(a.id)) { renderPill(); state.deferred = true; return; }
     var y = window.scrollY;
     renderView();
     if (y) window.scrollTo(0, y);
@@ -1447,35 +1389,80 @@
     reader.readAsText(file);
   }
 
-  /* ---------- Kopia: łączenie ---------- */
+  /* ---------- Ekran logowania / zakładania konta ---------- */
 
-  function setHint(el, text, isError) {
-    if (!el) return;
-    el.textContent = text;
-    el.classList.toggle('err', !!isError);
+  function authView() {
+    var reg = state.authMode !== 'login';
+    var h = '<div class="home auth">' +
+      '<header class="home-top">' + HOME_ECG + '<div class="home-glow" aria-hidden="true"></div><div class="home-bokeh" aria-hidden="true"></div>' +
+      '<div class="home-icons"></div>' + LOGO + '<h1>' + APP_NAME + '</h1><p>Dziennik pomiarów</p></header>' +
+      '<div class="home-body stack"><section class="last-card auth-card">' +
+      '<div class="seg full red" role="tablist">' +
+      '<button role="tab" aria-selected="' + reg + '" aria-checked="' + reg + '" data-action="auth-mode" data-m="register">Załóż konto</button>' +
+      '<button role="tab" aria-selected="' + !reg + '" aria-checked="' + !reg + '" data-action="auth-mode" data-m="login">Mam konto</button></div>' +
+      '<form id="auth-form" class="auth-form" novalidate>' +
+      (reg ? '<div class="field"><label for="au-imie">Imię i nazwisko <em>(na raport dla lekarza)</em></label><input id="au-imie" class="input" type="text" maxlength="50" autocomplete="name" placeholder="np. Jan Kowalski"></div>' : '') +
+      '<div class="field"><label for="au-login">Login</label><input id="au-login" class="input" type="text" maxlength="30" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="np. jan.kowalski"></div>' +
+      '<div class="field"><label for="au-haslo">Hasło' + (reg ? ' <em>(min. 8 znaków)</em>' : '') + '</label><input id="au-haslo" class="input" type="password" autocomplete="' + (reg ? 'new-password' : 'current-password') + '"></div>' +
+      (reg ? '<div class="field"><label for="au-kod">Kod zaproszenia <em>(dostajesz go od osoby, która dała Ci aplikację)</em></label><input id="au-kod" class="input" type="text" autocapitalize="none" autocomplete="off" spellcheck="false"></div>' : '') +
+      '<p class="hint err" id="au-err" role="alert"></p>' +
+      '<button class="btn red block big" type="submit" id="au-go">' + (reg ? 'Załóż konto' : 'Zaloguj się') + '</button></form>' +
+      '<p class="help small auth-note">' + icon('shield') + '<span>Twoje pomiary widzisz tylko Ty. Na serwerze są zaszyfrowane i codziennie kopiowane.</span></p>' +
+      '</section></div></div>';
+    return h;
   }
 
-  function connect() {
-    if (state.connecting) return;
-    var repo = Sync.parseRepo($('repo-input').value);
-    var token = $('token-input').value;
-    var err = $('connect-error');
-    if (!repo) { setHint(err, 'Wpisz repozytorium w formie login/nazwa, np. lewym90/cisnienie-dane.', true); return; }
-    if (!token.trim()) { setHint(err, 'Wklej token dostępu.', true); return; }
-    state.connecting = true;
-    setHint(err, 'Łączę z GitHubem…', false);
-    var btn = document.querySelector('[data-action="sync-connect"]');
-    if (btn) btn.disabled = true;
-    Sync.connect(repo.owner, repo.repo, token).then(function () {
-      state.connecting = false;
+  function authSubmit() {
+    if (state.authBusy) return;
+    var reg = state.authMode !== 'login';
+    var err = $('au-err');
+    var o = {
+      login: ($('au-login').value || '').trim(), haslo: $('au-haslo').value || '',
+      imie: reg ? C.normalizeName($('au-imie').value) : '', kod: reg ? ($('au-kod').value || '').trim() : ''
+    };
+    if (!/^[a-z0-9._-]{3,30}$/i.test(o.login)) { err.textContent = 'Login: od 3 do 30 znaków – litery bez polskich znaków, cyfry, kropka, minus lub podkreślnik.'; $('au-login').focus(); return; }
+    if (reg && o.haslo.length < 8) { err.textContent = 'Hasło musi mieć co najmniej 8 znaków.'; $('au-haslo').focus(); return; }
+    if (!o.haslo) { err.textContent = 'Wpisz hasło.'; $('au-haslo').focus(); return; }
+    if (reg && !o.kod) { err.textContent = 'Wpisz kod zaproszenia.'; $('au-kod').focus(); return; }
+    state.authBusy = true;
+    err.textContent = '';
+    var btn = $('au-go');
+    btn.disabled = true;
+    btn.textContent = reg ? 'Zakładam konto…' : 'Loguję…';
+    (reg ? Sync.register(o) : Sync.login(o)).then(function (a) {
+      state.authBusy = false;
+      if (reg && o.imie && !cfg().nm) updateCfg({ nm: o.imie });
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-      showToast('Kopia połączona i wysłana');
-      refreshPushState().then(refresh, refresh);
+      go('home');
+      showToast(reg ? 'Konto założone. Witaj' + (o.imie ? ', ' + o.imie.split(' ')[0] : '') + '!' : 'Zalogowano jako ' + (a ? a.login : o.login));
+      refreshPushState().then(function () { if (!state.editor) refresh(); });
     }, function (e) {
-      state.connecting = false;
-      if (btn) btn.disabled = false;
-      setHint($('connect-error'), e && e.message ? e.message : 'Nie udało się połączyć.', true);
+      state.authBusy = false;
+      if (!$('au-err')) return;
+      $('au-err').textContent = e && e.code === 'offline' ? 'Brak internetu. Połącz się i spróbuj ponownie.' : (e && e.message ? e.message : 'Nie udało się. Spróbuj ponownie.');
+      btn.disabled = false;
+      btn.textContent = reg ? 'Załóż konto' : 'Zaloguj się';
     });
+  }
+
+  /** Wylogowanie: dane znikają z tego urządzenia (są bezpieczne na serwerze). */
+  function doLogout(reason) {
+    var finish = function () {
+      Store.lsSet('cisnienie.push.ep', '');
+      state.data = C.emptyData();
+      state.version++;
+      Store.save(state.data);
+      Store.setDirty(false);
+      state.view = 'auth';
+      state.authMode = 'login';
+      if (state.editor) closeEditor();
+      renderView();
+      applyTheme();
+      window.scrollTo(0, 0);
+      if (reason) showToast(reason, { kind: 'error' });
+    };
+    var p = state.push.status === 'on' ? disablePush(true) : Promise.resolve();
+    return p.then(function () { return Sync.logout(); }).then(finish, finish);
   }
 
   /* ---------- Zdarzenia ---------- */
@@ -1587,14 +1574,43 @@
       case 'push-enable': enablePush(); break;
       case 'push-disable': disablePush(); break;
       case 'push-test': testPush(); break;
-      case 'sync-connect': connect(); break;
+      case 'auth-mode':
+        state.authMode = el.getAttribute('data-m');
+        renderView();
+        break;
+      case 'logout':
+        confirmDialog({ title: 'Wylogować?', text: 'Pomiary znikną z tego urządzenia, ale zostaną bezpiecznie na Twoim koncie. Po zalogowaniu wrócą.', ok: 'Wyloguj', danger: true })
+          .then(function (yes) { if (yes) { Store.setDirty(true); Sync.run().then(function () { doLogout(); }); } });
+        break;
+      case 'pass-open':
+        var pf = $('pass-form');
+        if (pf) { pf.hidden = !pf.hidden; if (!pf.hidden) $('pass-old').focus(); }
+        break;
+      case 'pass-save':
+        var ph = $('pass-hint');
+        var po = $('pass-old').value, pn = $('pass-new').value;
+        if (pn.length < 8) { ph.textContent = 'Nowe hasło musi mieć co najmniej 8 znaków.'; ph.classList.add('err'); break; }
+        ph.classList.remove('err'); ph.textContent = 'Zapisuję…';
+        Sync.changePassword(po, pn).then(function () {
+          showToast('Hasło zmienione. Inne urządzenia poproszą o zalogowanie nowym hasłem.');
+          refresh();
+        }, function (e) { if ($('pass-hint')) { $('pass-hint').textContent = e.message; $('pass-hint').classList.add('err'); } });
+        break;
+      case 'account-delete':
+        var dh = $('del-hint'), dp = $('del-pass').value;
+        if (!dp) { dh.textContent = 'Wpisz hasło.'; dh.classList.add('err'); break; }
+        confirmDialog({ title: 'Usunąć konto na zawsze?', text: 'Wszystkie pomiary znikną z serwera i z tego urządzenia. Tego nie da się cofnąć.', ok: 'Usuń konto', danger: true })
+          .then(function (yes) {
+            if (!yes) return;
+            var p0 = state.push.status === 'on' ? disablePush(true) : Promise.resolve();
+            p0.then(function () { return Sync.deleteAccount(dp); }).then(function () { doLogout('Konto i pomiary zostały usunięte.'); }, function (e) {
+              if ($('del-hint')) { $('del-hint').textContent = e.message; $('del-hint').classList.add('err'); }
+            });
+          });
+        break;
       case 'sync-now':
         Store.setDirty(true);
         Sync.run();
-        break;
-      case 'sync-disconnect':
-        confirmDialog({ title: 'Odłączyć kopię?', text: 'Pomiary zostaną na tym urządzeniu i w repozytorium, ale nowe nie będą wysyłane. Przypomnienia przestaną działać na tym urządzeniu.', ok: 'Odłącz', danger: true })
-          .then(function (yes) { if (yes) { Sync.disconnect(); refresh(); } });
         break;
       case 'export-json':
         download(C.APP_ID + '-kopia-' + state.today + '.json', C.serialize(state.data), 'application/json');
@@ -1651,6 +1667,10 @@
       if (b && state.editor && ev.detail === 0) stepField(b.getAttribute('data-f'), +b.getAttribute('data-d')); // klawiatura
     });
 
+    document.addEventListener('submit', function (ev) {
+      if (ev.target.id === 'auth-form') { ev.preventDefault(); authSubmit(); }
+    });
+
     document.addEventListener('input', function (ev) {
       if (/^ed-in-/.test(ev.target.id)) onFieldInput(ev.target);
     });
@@ -1659,10 +1679,9 @@
       var t = ev.target;
       if (t.id === 'push-toggle') {
         if (t.checked) {
-          if (state.push.status === 'ios-install' || state.push.status === 'unsupported' || state.push.status === 'denied' || !Sync.getConfig()) {
+          if (state.push.status === 'ios-install' || state.push.status === 'unsupported' || state.push.status === 'denied') {
             t.checked = false;
-            showToast(!Sync.getConfig() ? 'Najpierw połącz kopię na GitHubie (Profil). Stamtąd wysyłane są przypomnienia.' :
-              state.push.status === 'ios-install' ? 'Na iPhonie dodaj aplikację do ekranu początkowego, a potem włącz przypomnienia.' :
+            showToast(state.push.status === 'ios-install' ? 'Na iPhonie dodaj aplikację do ekranu początkowego, a potem włącz przypomnienia.' :
               state.push.status === 'denied' ? 'Powiadomienia są zablokowane w ustawieniach telefonu.' : 'To urządzenie nie obsługuje powiadomień.', { kind: 'error' });
             return;
           }
@@ -1711,16 +1730,15 @@
           return;
         }
       }
-      if (ev.key === 'Enter' && (t.id === 'repo-input' || t.id === 'token-input')) { ev.preventDefault(); connect(); }
       if (ev.key === 'Enter' && t.id === 'name-input') { ev.preventDefault(); t.blur(); }
     });
 
     document.addEventListener('focusout', function (ev) {
       var t = ev.target;
-      if (t && /^(repo-input|token-input|name-input)$/.test(t.id) && state.deferred) {
+      if (t && /^(name-input|pass-old|pass-new|del-pass)$/.test(t.id) && state.deferred) {
         setTimeout(function () {
           var a = document.activeElement;
-          if (state.deferred && !(a && /^(repo-input|token-input|name-input)$/.test(a.id))) { state.deferred = false; refresh(); }
+          if (state.deferred && !(a && /^(name-input|pass-old|pass-new|del-pass)$/.test(a.id))) { state.deferred = false; refresh(); }
         }, 250);
       }
     });
@@ -1779,9 +1797,10 @@
   /* ---------- Start ---------- */
 
   function finishStart() {
+    if (!Sync.getAccount()) state.view = 'auth';
     renderView();
     applyTheme();
-    if (Sync.getConfig()) Sync.run();
+    if (Sync.getAccount()) Sync.run();
     Store.requestPersistence();
     refreshPushState().then(function () { if (state.view === 'settings' && !state.editor) refresh(); });
   }
@@ -1797,6 +1816,9 @@
         state.data = C.merge(state.data, d);
         state.storageOk = Store.save(state.data) && state.storageOk;
         if (!state.editor) refresh();
+      },
+      onAuthLost: function () {
+        doLogout('Zaloguj się ponownie (hasło zostało zmienione albo sesja wygasła).');
       },
       onStatus: function (s) {
         state.sync = s;

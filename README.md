@@ -1,6 +1,6 @@
 # Ciśnienie – dziennik pomiarów
 
-Prosta i ładna aplikacja do zapisywania pomiarów ciśnienia krwi i tętna. Działa na iPhonie, Androidzie i komputerze, instaluje się jak zwykła aplikacja (ikona na ekranie), działa bez internetu, a po każdym pomiarze może wysłać kopię do Twojego **prywatnego** repozytorium GitHub.
+Prosta i ładna aplikacja do zapisywania pomiarów ciśnienia krwi i tętna. Działa na iPhonie, Androidzie i komputerze, instaluje się jak zwykła aplikacja (ikona na ekranie) i działa bez internetu. Każdy użytkownik ma własne konto: swoje pomiary, swoje kopie i swoje przypomnienia.
 
 Adres po publikacji: `https://lewym90.github.io/moje-cisnienie/`
 
@@ -13,7 +13,7 @@ Adres po publikacji: `https://lewym90.github.io/moje-cisnienie/`
 - **Statystyki**: Tydzień / Miesiąc / 3 miesiące / Rok – średnie, wykres skurczowego i rozkurczowego, główny wniosek („Stabilne wartości”, „Ciśnienie spada” …), tętno, rano i wieczorem, kategorie pomiarów, wnioski słowne i **raport dla lekarza** (druk / PDF).
 - **Tydzień pomiarów przed wizytą**: 7 dni, rano i wieczorem po 2 pomiary; aplikacja prowadzi dzień po dniu i liczy średnią z dni 2–7 (tak jak zalecają wytyczne), z osobnym raportem dla lekarza.
 - **Kategorie** według wytycznych ESH 2023. Domyślny cel 135/85 (granica dla pomiarów domowych), do zmiany w Profilu, jeśli lekarz ustalił inny.
-- **Przypomnienia** rano i wieczorem o wybranych godzinach – tylko wtedy, gdy nie było świeżego pomiaru.
+- **Konto dla każdego**: własne pomiary, kopie i przypomnienia (rano i wieczorem, tylko gdy nie było świeżego pomiaru).
 - **Dane**: kopia JSON, eksport CSV (Excel), import JSON i CSV bez dublowania, jasny i ciemny motyw.
 
 Aplikacja jest dzienniczkiem. Nie stawia diagnozy i nie zastępuje lekarza.
@@ -32,31 +32,44 @@ Aplikacja jest dzienniczkiem. Nie stawia diagnozy i nie zastępuje lekarza.
 | Android | Chrome → menu (⋮) → **Zainstaluj aplikację** |
 | Komputer | Chrome / Edge → ikona instalacji w pasku adresu |
 
-## Kopia bezpieczeństwa (prywatne repozytorium)
+## Konta, kopie i przypomnienia (serwer)
 
-Dane o zdrowiu trafiają do **osobnego, prywatnego** repozytorium – aplikacja odmawia połączenia z publicznym.
+Każdy użytkownik zakłada w aplikacji **własne konto** (login + hasło) i widzi **tylko swoje** pomiary, swoje kopie i swoje przypomnienia. Konto działa na wielu urządzeniach – wystarczy zalogować się tym samym loginem.
 
-1. https://github.com/new → nazwa `cisnienie-dane` → **Private** → zaznacz „Add a README file” → **Create repository**.
-2. https://github.com/settings/personal-access-tokens/new → nazwa np. „Dane ciśnienia”, najdłuższy czas ważności → **Only select repositories** → `cisnienie-dane` → Repository permissions: **Contents: Read and write** oraz **Workflows: Read and write** → **Generate token**.
-3. W aplikacji: **Profil → Kopia bezpieczeństwa**: wpisz `lewym90/cisnienie-dane`, wklej token → „Połącz i wyślij kopię”. Na drugim urządzeniu to samo.
+Wszystko robi serwer `serwer/cisnienie.mjs` na VPS (obok innych aplikacji, adres `https://188-68-247-201.sslip.io/cisnienie-api`):
 
-Po każdym pomiarze dane z urządzenia i z GitHuba są scalane (wygrywa nowsza wersja każdego pomiaru, usunięcia też się synchronizują) i zapisywane jako osobny commit – historia zmian jest pełna.
+- konta (hasła scrypt, blokada zgadywania), sesje na urządzeniach,
+- pomiary każdego konta zaszyfrowane AES-256-GCM (klucz w `/etc/cisnienie/klucz`, poza bazą),
+- scalanie danych z kilku urządzeń (ta sama logika co w aplikacji, `js/core.js`),
+- kopia całej bazy codziennie, 30 ostatnich dni (`/var/lib/cisnienie/kopie`),
+- przypomnienia push co minutę według godzin i strefy czasowej każdego użytkownika (własna implementacja Web Push, bez bibliotek).
 
-## Przypomnienia (powiadomienia na telefonie)
+Nowe konto da się założyć tylko z **kodem zaproszenia** – ustawia go administrator na serwerze.
 
-Przypomnienia wysyła zadanie GitHub Actions w Twoim prywatnym repozytorium z danymi. Jednorazowo:
+### Instalacja serwera (jednorazowo, jako root)
 
-1. Repozytorium `cisnienie-dane` → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. Name: `VAPID_PRIVATE_KEY`, Secret: klucz prywatny (dostajesz go ode mnie w czacie) → **Add secret**.
-2. Na iPhonie aplikacja musi być dodana do ekranu początkowego (iOS 16.4+). W aplikacji: **Profil → Przypomnienia o pomiarze** → wybierz godziny → „Włącz przypomnienia”. Aplikacja sama doda zadanie `.github/workflows/przypomnienia.yml` do repozytorium z danymi.
-3. Test: `cisnienie-dane` → **Actions** → „Przypomnienia o pomiarze” → **Run workflow** → zaznacz „Wyślij próbne powiadomienie” → **Run workflow**.
+```
+curl -fsSL https://raw.githubusercontent.com/lewym90/moje-cisnienie/main/serwer/install.sh | bash
+```
 
-Zadanie startuje co godzinę (7 minut po pełnej godzinie, GitHub potrafi je opóźnić), więc przypomnienie przychodzi zwykle w ciągu kilkunastu minut od ustawionej godziny. Wysyła je tylko, gdy od 2 godzin przed tą godziną nie było pomiaru, i najwyżej raz dziennie dla każdej pory. Treść nie zawiera wyników. Jedno uruchomienie trwa kilka sekund (prywatne repozytorium ma 2000 darmowych minut miesięcznie – wystarczy z dużym zapasem). GitHub wyłącza zaplanowane zadania po 60 dniach bez żadnych zmian w repozytorium; regularne pomiary temu zapobiegają.
+Skrypt na końcu poprosi o kod zaproszenia. Ten sam wiersz aktualizuje serwer (konta i pomiary zostają).
+
+### Polecenia administratora
+
+| Polecenie | Co robi |
+| --- | --- |
+| `cisnienie-kod` | pokazuje albo zmienia kod zaproszenia |
+| `cisnienie-konta` | lista kont |
+| `cisnienie-konta reset LOGIN` | nowe hasło dla osoby, która zapomniała (pomiary zostają) |
+| `cisnienie-konta usun LOGIN` | usuwa konto razem z pomiarami |
+
+Sprawdzenie: `curl -s https://188-68-247-201.sslip.io/cisnienie-api/zdrowie`
 
 ## Dla programisty
 
-Zwykłe pliki (HTML, CSS, JavaScript), bez budowania. Podgląd: `node tools/serve.js` → http://localhost:8080. Testy: `npm install`, potem `npm test`.
+Zwykłe pliki (HTML, CSS, JavaScript), bez budowania. Podgląd: `node tools/serve.js` → http://localhost:8080. Testy (aplikacja + serwer, Node 24): `npm install`, potem `npm test`.
 
-Nowa wersja: zwiększ `VERSION` w `sw.js` i `APP_VERSION` w `js/app.js`.
+Nowa wersja aplikacji: zwiększ `VERSION` w `sw.js` i `APP_VERSION` w `js/app.js`. Nowa wersja serwera: `WERSJA` w `serwer/cisnienie.mjs`, potem na serwerze ten sam wiersz instalacji.
 
 ```
 index.html               szkielet
@@ -64,10 +77,11 @@ css/style.css            wygląd (jasny / ciemny)
 css/report.css           raporty do druku
 js/core.js               logika: wartości, kategorie ESH, statystyki, scalanie, CSV (testowana, bez DOM)
 js/store.js              zapis na urządzeniu (localStorage + IndexedDB)
-js/sync.js               kopia i synchronizacja z GitHub, zadanie przypomnień
+js/sync.js               konto i synchronizacja z serwerem
 js/app.js                interfejs
 sw.js                    tryb offline i powiadomienia
-tools/remind.js          logika przypomnień (uruchamiana przez GitHub Actions)
-tools/przypomnienia.yml  wzór zadania, które aplikacja dodaje do repozytorium z danymi
+serwer/cisnienie.mjs     serwer: konta, zaszyfrowane dane, kopie, przypomnienia push
+serwer/admin.mjs         polecenia administratora
+serwer/install.sh        instalacja / aktualizacja serwera
 tests/                   testy automatyczne
 ```
