@@ -6,7 +6,7 @@
   var Store = window.SCStore;
   var Sync = window.SCSync;
   var APP_NAME = 'Ciśnienie';
-  var APP_VERSION = '1.2.0';
+  var APP_VERSION = '1.3.0';
 
   /* ---------- Narzędzia ---------- */
 
@@ -138,7 +138,7 @@
 
   /** Skala kategorii z zaznaczonym poziomem (−1 = bez znacznika). */
   function scaleSvg(level, label) {
-    var w = 40, h = '';
+    var w = 280 / C.CATS.length, h = '';
     C.CATS.forEach(function (c, i) {
       var on = i === level;
       h += '<rect class="cf-' + c.id + (level >= 0 && !on ? ' dim' : '') + '" x="' + (i * w + 1.5) + '" y="' + (on ? 11 : 13) + '" width="' + (w - 3) + '" height="' + (on ? 10 : 6) + '" rx="' + (on ? 5 : 3) + '"/>';
@@ -397,9 +397,10 @@
   }
 
   /** Zielona/żółta/czerwona plakietka stanu jak na renderze („✓ Prawidłowe ciśnienie”). */
-  function statusChip(c) {
-    var ic = c.level >= 1 && c.level <= 2 ? 'checkCircle' : c.level >= 4 ? 'alert' : 'info';
-    return '<span class="status-chip cb-' + c.id + '">' + icon(ic) + esc(c.long) + '</span>';
+  function statusChip(c, r) {
+    var crisis = r && C.isCrisis(r.s, r.di);
+    var ic = c.level === 1 ? 'checkCircle' : c.level === 3 ? 'alert' : 'info';
+    return '<span class="status-chip cb-' + c.id + '">' + icon(ic) + esc(crisis ? 'Bardzo wysokie ciśnienie' : c.long) + '</span>';
   }
 
   /* ---------- Widok: Start ---------- */
@@ -423,12 +424,12 @@
     '<path d="' + ECG_D + '" fill="none" stroke="#ffc9cf" stroke-width="1" stroke-linejoin="round" opacity=".55"/></svg>';
 
   function nextReminder() {
-    var c = cfg();
-    var hNow = new Date().getHours() * 60 + new Date().getMinutes();
-    var hours = [c.rm, c.re].filter(function (h) { return h >= 0; }).sort(function (a, b) { return a - b; });
-    if (!hours.length) return 'Przypomnienia wyłączone';
-    for (var i = 0; i < hours.length; i++) if (hours[i] * 60 > hNow) return 'Dziś, ' + C.pad(hours[i]) + ':00';
-    return 'Jutro, ' + C.pad(hours[0]) + ':00';
+    var rp = cfg().rp;
+    if (!rp.length) return 'Brak ustawionych przypomnień';
+    var now = new Date();
+    var m = now.getHours() * 60 + now.getMinutes();
+    for (var i = 0; i < rp.length; i++) if (C.parseTime(rp[i]) > m) return 'Dziś, ' + rp[i];
+    return 'Jutro, ' + rp[0];
   }
 
   function lastCard() {
@@ -443,7 +444,7 @@
       '<div class="lc-row"><button class="lc-bp num" data-action="edit" data-id="' + esc(last.id) + '" aria-label="Ostatni pomiar ' + last.s + ' na ' + last.di + ' mmHg, popraw">' +
       '<span class="big">' + last.s + '<i> / </i>' + last.di + '</span><span class="u">mmHg</span></button>' +
       (last.p ? '<div class="lc-pulse">' + icon('heart', 'beat') + '<b class="num">' + last.p + '</b><span>ud./min</span></div>' : '') + '</div>' +
-      '<div class="lc-status">' + statusChip(c) + '</div>' +
+      '<div class="lc-status">' + statusChip(c, last) + '</div>' +
       '<button class="btn red block big" data-action="add">' + icon('plus') + 'Dodaj pomiar</button></section>';
   }
 
@@ -549,11 +550,11 @@
       '<li>Zrób 2 pomiary w odstępie 1–2 minut i zapisz oba.</li>' +
       '<li>Mierz rano (po wstaniu, przed lekami i śniadaniem) i wieczorem (przed kolacją).</li>' +
       '<li>Mierz na ręce, na której ciśnienie jest wyższe. Aplikacja zapamięta, którą wybierasz.</li></ol></div>';
-    h += '<div class="card"><h2>' + icon('info') + 'Kategorie ciśnienia (ESH 2023)</h2><div class="tips-scale">' + scaleSvg(-1) + '</div>' +
+    h += '<div class="card"><h2>' + icon('info') + 'Kategorie ciśnienia (' + C.GUIDE + ')</h2><div class="tips-scale">' + scaleSvg(-1) + '</div>' +
       '<ul class="cat-list scale-list">' + C.CATS.map(function (c) {
         return '<li><span class="mdot cb-' + c.id + '"></span><span class="grow">' + esc(c.long) + '</span><em class="num">' + esc(c.range) + '</em></li>';
       }).join('') + '</ul>' +
-      '<p class="help small">O kategorii decyduje wyższa z dwóch wartości. Dla średniej z pomiarów domowych granicą nadciśnienia jest 135/85 mmHg – dlatego to domyślny cel w aplikacji.</p></div>';
+      '<p class="help small">Według wytycznych Polskiego Towarzystwa Nadciśnienia Tętniczego i Polskiego Towarzystwa Kardiologicznego (2024), zgodnych z wytycznymi europejskimi ESC 2024. O kategorii decyduje wyższa z dwóch wartości. Kategorie dotyczą pomiaru w gabinecie; dla średniej z pomiarów domowych granicą nadciśnienia jest 135/85 mmHg – dlatego to domyślny cel w aplikacji. „Niskie” (poniżej 90/60) to dodatkowa kategoria aplikacji. Wartości 180/110 i wyższe aplikacja oznacza jako bardzo wysokie.</p></div>';
     h += '<div class="card danger-card"><h2>' + icon('alert') + 'Kiedy dzwonić pod 112</h2><p class="help">Gdy ciśnienie wynosi 180/110 mmHg lub więcej i towarzyszy mu ból w klatce piersiowej, duszność, silny ból głowy, zaburzenia mowy lub widzenia, osłabienie ręki albo nogi. Bez tych objawów: odpocznij 5 minut, zmierz ponownie i skontaktuj się z lekarzem.</p></div>';
     h += protoCard(false);
     return h + '</div>';
@@ -605,6 +606,20 @@
     }).join('') + '</div>';
   }
 
+  /** Karta „Analiza pomiarów”: wskazówki z serii pomiarów według progów z wytycznych. */
+  function analysisCard(list) {
+    var a = C.analysis(list);
+    var h = '<div class="card analysis"><div class="card-head"><h2>' + icon('spark') + 'Analiza pomiarów</h2><span class="muted small">wskazówki</span></div>' +
+      '<p class="help">Aplikacja porównuje Twoje pomiary z progami z wytycznych (PTNT/PTK 2024, ESC 2024, ESH). To wskazówki do rozmowy z lekarzem, nie diagnoza.</p>' +
+      '<ul class="findings">' + a.findings.map(function (f) {
+        return '<li class="' + f.kind + '">' + icon(f.kind === 'warn' ? 'alert' : f.kind === 'ok' ? 'checkCircle' : 'info') + '<div><b>' + esc(f.title) + '</b><span>' + esc(f.text) + '</span></div></li>';
+      }).join('') + '</ul>';
+    if (a.enough && !list.some(function (r) { return (r.g || []).indexOf('gabinet') >= 0; })) {
+      h += '<p class="help small">Gdy zmierzysz ciśnienie u lekarza, zapisz wynik z okolicznością „U lekarza”. Aplikacja porówna go z pomiarami domowymi.</p>';
+    }
+    return h + '</div>';
+  }
+
   function chartsView() {
     var t = target();
     var h = pageBar('Statystyki', 'home') + '<div class="stack">';
@@ -642,9 +657,10 @@
       if (!n) return '';
       return '<li><span class="mdot cb-' + cc.id + '"></span><span class="grow">' + esc(cc.label) + '</span><b class="num">' + n + '</b><em class="num">' + Math.round(n * 100 / st.n) + '%</em></li>';
     }).join('') + '</ul></div>';
+    h += analysisCard(list);
     var ins = C.insights(list, t, rg.from, rg.to);
     if (ins.length) {
-      h += '<div class="card"><h2>Wnioski</h2><ul class="insights">' + ins.map(function (i) {
+      h += '<div class="card"><h2>Podsumowanie</h2><ul class="insights">' + ins.map(function (i) {
         return '<li class="' + i.kind + '">' + icon(i.kind === 'warn' ? 'alert' : i.kind === 'ok' ? 'check' : 'spark') + '<span>' + esc(i.text) + '</span></li>';
       }).join('') + '</ul><p class="help small">Wnioski opisują Twoje pomiary. O leczeniu decyduje lekarz.</p></div>';
     }
@@ -661,11 +677,6 @@
       '<button class="icon-btn" data-action="tgt" data-f="' + field + '" data-d="-5" aria-label="' + label + ' mniej">−</button>' +
       '<b class="num">' + value + '</b>' +
       '<button class="icon-btn" data-action="tgt" data-f="' + field + '" data-d="5" aria-label="' + label + ' więcej">+</button></div></div>';
-  }
-
-  function hourSelect(id, value, hours) {
-    return '<select id="' + id + '" class="input select">' + '<option value="-1"' + (value === -1 ? ' selected' : '') + '>wyłączone</option>' +
-      hours.map(function (hh) { return '<option value="' + hh + '"' + (value === hh ? ' selected' : '') + '>' + C.pad(hh) + ':00</option>'; }).join('') + '</select>';
   }
 
   /* ----- Powiadomienia (wysyła je serwer aplikacji, nic nie trzeba ustawiać) ----- */
@@ -786,9 +797,14 @@
   function remindCard() {
     var p = state.push, c = cfg();
     var h = '<div class="card" id="push-card"><h2>' + icon('bell') + 'Przypomnienia o pomiarze</h2>' +
-      '<p class="help">Jeśli o wybranej godzinie nie będzie świeżego pomiaru (z ostatnich 2 godzin), telefon pokaże przypomnienie. Godziny obowiązują na wszystkich Twoich urządzeniach.</p>' +
-      '<div class="hours"><label class="hour">' + icon('sun') + '<span>Rano</span>' + hourSelect('rm-select', c.rm, C.RM_HOURS) + '</label>' +
-      '<label class="hour">' + icon('moon') + '<span>Wieczorem</span>' + hourSelect('re-select', c.re, C.RE_HOURS) + '</label></div>';
+      '<p class="help">Ustaw dowolne godziny (najwyżej ' + C.MAX_RP + '). Jeśli o danej godzinie nie będzie świeżego pomiaru (z ostatnich 2 godzin), telefon pokaże przypomnienie. Godziny obowiązują na wszystkich Twoich urządzeniach.</p>' +
+      '<div class="rp-list">' + (c.rp.length ? c.rp.map(function (t, i) {
+        var m = C.parseTime(t);
+        var ic = m >= 240 && m < 720 ? 'sun' : m >= 1020 || m < 240 ? 'moon' : 'clock';
+        return '<div class="rp-row">' + icon(ic) + '<input class="input rp-in" type="time" data-i="' + i + '" value="' + t + '" aria-label="Godzina przypomnienia ' + (i + 1) + '">' +
+          '<button class="icon-btn ghost" data-action="rp-del" data-i="' + i + '" aria-label="Usuń przypomnienie o ' + t + '">' + icon('trash') + '</button></div>';
+      }).join('') : '<p class="help muted">Brak przypomnień.</p>') + '</div>' +
+      (c.rp.length < C.MAX_RP ? '<div class="btn-row"><button class="btn small" data-action="rp-add">' + icon('plus') + 'Dodaj godzinę</button></div>' : '');
     if (p.status === 'ios-install') {
       h += '<div class="banner warn">' + icon('info') + '<div class="grow"><strong>Najpierw dodaj aplikację do ekranu</strong>Na iPhonie przypomnienia działają tylko w aplikacji dodanej do ekranu początkowego (iOS 16.4 lub nowszy): Safari → Udostępnij → „Do ekranu początkowego” → „Dodaj”. Potem otwórz Ciśnienie z ikony i wróć tutaj.</div></div>';
     } else if (p.status === 'unsupported') {
@@ -860,11 +876,11 @@
   }
 
   function scaleCard() {
-    return '<details class="card tips"><summary>' + icon('info') + '<span>Kategorie ciśnienia (ESH 2023)</span>' + icon('chevR', 'chev') + '</summary>' +
+    return '<details class="card tips"><summary>' + icon('info') + '<span>Kategorie ciśnienia (' + C.GUIDE + ')</span>' + icon('chevR', 'chev') + '</summary>' +
       '<ul class="cat-list scale-list">' + C.CATS.map(function (c) {
         return '<li><span class="mdot cb-' + c.id + '"></span><span class="grow">' + esc(c.long) + '</span><em class="num">' + esc(c.range) + '</em></li>';
       }).join('') + '</ul>' +
-      '<p class="help small">O kategorii decyduje wyższa z dwóch wartości. Kategorie dotyczą pojedynczego pomiaru. Dla średniej z pomiarów domowych granicą nadciśnienia jest 135/85 mmHg – dlatego to domyślny cel w aplikacji.</p></details>';
+      '<p class="help small">O kategorii decyduje wyższa z dwóch wartości. Dla średniej z pomiarów domowych granicą nadciśnienia jest 135/85 mmHg – dlatego to domyślny cel w aplikacji.</p></details>';
   }
 
   function settingsView() {
@@ -910,6 +926,10 @@
     h += '<p class="rep-note">Ciśnienie w mmHg, tętno w uderzeniach na minutę. Cel: poniżej ' + t.ts + '/' + t.td + ' (w celu ' + st.inTargetPct + '% pomiarów). ' +
       C.CATS.filter(function (cc) { return st.cats[cc.id]; }).map(function (cc) { return cc.label + ': ' + st.cats[cc.id]; }).join(', ') + '.</p>';
     h += '<div class="rep-chart">' + rangeChart(cp.points, t, cp.unit) + '</div>';
+    var an = C.analysis(list);
+    h += '<div class="rep-an"><b>Wskazówki z analizy serii (automatyczne, do oceny przez lekarza):</b><ul>' + an.findings.map(function (f) {
+      return '<li><b>' + esc(f.title) + '.</b> ' + esc(f.text) + '</li>';
+    }).join('') + '</ul></div>';
     h += '<table class="rep-table"><thead><tr><th>Data</th><th>Godzina</th><th>Ciśnienie</th><th>Tętno</th><th>Kategoria</th><th>Uwagi</th></tr></thead><tbody>';
     var prevD = '';
     list.forEach(function (r) {
@@ -919,7 +939,7 @@
       prevD = r.d;
     });
     h += '</tbody></table>';
-    h += '<p class="rep-foot">Kategorie według wytycznych ESH 2023. Granica nadciśnienia dla średniej z pomiarów domowych: 135/85 mmHg. Dzienniczek prowadzony w aplikacji ' + APP_NAME + '.</p>';
+    h += '<p class="rep-foot">Kategorie według wytycznych ' + C.GUIDE + ' (optymalne poniżej 120/70, podwyższone 120–139/70–89, nadciśnienie 140/90 i więcej). Granica nadciśnienia dla średniej z pomiarów domowych: 135/85 mmHg. Dzienniczek prowadzony w aplikacji ' + APP_NAME + '.</p>';
     return h + '</div>';
   }
 
@@ -1132,7 +1152,7 @@
       pv.innerHTML = icon('alert') + '<span>' + esc(e.err) + '</span>';
     } else if (ok) {
       pv.className = 'preview';
-      pv.innerHTML = statusChip(C.classify(s, di));
+      pv.innerHTML = statusChip(C.classify(s, di), { s: s, di: di });
     } else {
       pv.className = 'preview hint-only';
       pv.innerHTML = '<span>' + (C.lastReading(state.data) ? 'Szare liczby to Twój ostatni pomiar. Wpisz nowy wynik albo użyj − i +.' : 'Wpisz wynik z ciśnieniomierza albo użyj − i +.') + '</span>';
@@ -1478,6 +1498,21 @@
         break;
       case 'add': openEditor(null); break;
       case 'edit': openEditor(el.getAttribute('data-id')); break;
+      case 'rp-add':
+        var rpa = cfg().rp.slice();
+        var cand = ['08:00', '20:00', '12:00', '18:00', '07:00', '21:00', '10:00', '16:00'].filter(function (x) { return rpa.indexOf(x) < 0; })[0] || '09:00';
+        rpa.push(cand);
+        updateCfg({ rp: rpa });
+        refresh();
+        showToast('Dodano przypomnienie o ' + cand + '. Zmień godzinę, jeśli chcesz.');
+        break;
+      case 'rp-del':
+        var rpd = cfg().rp.slice();
+        var gone = rpd.splice(+el.getAttribute('data-i'), 1)[0];
+        updateCfg({ rp: rpd });
+        refresh();
+        showToast('Usunięto przypomnienie o ' + gone);
+        break;
       case 'goto-remind':
         go('settings');
         if ($('push-card') && $('push-card').scrollIntoView) $('push-card').scrollIntoView({ block: 'start' });
@@ -1692,11 +1727,14 @@
       if (t.id === 'import-file') {
         importFile(t.files && t.files[0]);
         t.value = '';
-      } else if (t.id === 'rm-select' || t.id === 're-select') {
-        var patch = {};
-        patch[t.id === 'rm-select' ? 'rm' : 're'] = parseInt(t.value, 10);
-        updateCfg(patch);
-        showToast(patch.rm === -1 || patch.re === -1 ? 'Przypomnienie wyłączone' : 'Zapisano godzinę przypomnienia');
+      } else if (t.classList && t.classList.contains('rp-in')) {
+        if (C.parseTime(t.value) === null) { refresh(); return; }
+        var rpc = cfg().rp.slice();
+        rpc[+t.getAttribute('data-i')] = t.value;
+        var dup = rpc.filter(function (x) { return x === t.value; }).length > 1;
+        updateCfg({ rp: rpc });
+        refresh();
+        showToast(dup ? 'Ta godzina już jest na liście' : 'Zapisano przypomnienie o ' + t.value);
       } else if (t.id === 'name-input') {
         var nm = C.normalizeName(t.value);
         if (nm !== cfg().nm) { updateCfg({ nm: nm }); showToast(nm ? 'Zapisano imię i nazwisko' : 'Usunięto imię i nazwisko'); }

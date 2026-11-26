@@ -12,8 +12,9 @@ Adres po publikacji: `https://lewym90.github.io/moje-cisnienie/`
 - **Pomiary (historia)**: miesiąc po miesiącu, z podziałem na dni, średnią miesiąca, liczbą pomiarów w celu i raportem z miesiąca.
 - **Statystyki**: Tydzień / Miesiąc / 3 miesiące / Rok – średnie, wykres skurczowego i rozkurczowego, główny wniosek („Stabilne wartości”, „Ciśnienie spada” …), tętno, rano i wieczorem, kategorie pomiarów, wnioski słowne i **raport dla lekarza** (druk / PDF).
 - **Tydzień pomiarów przed wizytą**: 7 dni, rano i wieczorem po 2 pomiary; aplikacja prowadzi dzień po dniu i liczy średnią z dni 2–7 (tak jak zalecają wytyczne), z osobnym raportem dla lekarza.
-- **Kategorie** według wytycznych ESH 2023. Domyślny cel 135/85 (granica dla pomiarów domowych), do zmiany w Profilu, jeśli lekarz ustalił inny.
-- **Konto dla każdego**: własne pomiary, kopie i przypomnienia (rano i wieczorem, tylko gdy nie było świeżego pomiaru).
+- **Kategorie** według wytycznych PTNT/PTK 2024 (zgodnych z ESC 2024): optymalne poniżej 120/70, podwyższone 120–139/70–89, nadciśnienie od 140/90. Do tego „niskie” poniżej 90/60 i ostrzeżenie przy 180/110.
+- **Analiza pomiarów (wskazówki)**: średnia domowa względem 135/85, nadciśnienie poranne, porównanie z pomiarami u lekarza (biały fartuch / maskowane), przed i po lekach, nieregularne bicie serca, tętno. Nie jest diagnozą. Domyślny cel 135/85 (granica dla pomiarów domowych), do zmiany w Profilu, jeśli lekarz ustalił inny.
+- **Konto dla każdego**: własne pomiary, kopie i przypomnienia o dowolnych godzinach (do 6 dziennie, tylko gdy nie było świeżego pomiaru).
 - **Dane**: kopia JSON, eksport CSV (Excel), import JSON i CSV bez dublowania, jasny i ciemny motyw.
 
 Aplikacja jest dzienniczkiem. Nie stawia diagnozy i nie zastępuje lekarza.
@@ -75,7 +76,7 @@ Nowa wersja aplikacji: zwiększ `VERSION` w `sw.js` i `APP_VERSION` w `js/app.js
 index.html               szkielet
 css/style.css            wygląd (jasny / ciemny)
 css/report.css           raporty do druku
-js/core.js               logika: wartości, kategorie ESH, statystyki, scalanie, CSV (testowana, bez DOM)
+js/core.js               logika: wartości, kategorie PTNT/PTK 2024, analiza serii, statystyki, scalanie, CSV (testowana, bez DOM)
 js/store.js              zapis na urządzeniu (localStorage + IndexedDB)
 js/sync.js               konto i synchronizacja z serwerem
 js/app.js                interfejs

@@ -14,12 +14,12 @@ const require = createRequire(import.meta.url);
 // logika pomiarów wspólna z aplikacją (ten sam, przetestowany plik js/core.js)
 const C = (() => { try { return require('./core.cjs'); } catch { return require('../js/core.js'); } })();
 
-export const WERSJA = '1.0.0';
+export const WERSJA = '1.1.0';
 const PORT = Number(process.env.PORT || 18945);
 const DANE = process.env.CISNIENIE_DANE || './dane';
 const ORIGINS = (process.env.CISNIENIE_ORIGINS || 'https://lewym90.github.io,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8091').split(',');
 const MAX_BODY = 4 * 1024 * 1024;
-const OKNO_PRZYP = 150; // minut po ustawionej godzinie (nadrabia np. restart serwera)
+const OKNO_PRZYP = 90; // minut po ustawionej godzinie (nadrabia np. restart serwera)
 const PRZED = 120; // pomiar z 2 godzin przed przypomnieniem „zalicza” porę
 
 fs.mkdirSync(DANE, { recursive: true });
@@ -187,24 +187,31 @@ export function czasLokalny(date, tz) {
   return { dzien: `${o.year}-${o.month}-${o.day}`, minuty: Number(o.hour) * 60 + Number(o.minute) };
 }
 
-/** Które przypomnienia wysłać teraz temu użytkownikowi. wyslaneDzis: Set('rano'|'wieczor'). */
+/** Treść przypomnienia zależna od pory. */
+function trescPrzyp(t) {
+  const m = C.parseTime(t);
+  if (m >= 240 && m < 720) return 'Pora na poranny pomiar ciśnienia. Najlepiej przed lekami i śniadaniem.';
+  if (m >= 1020) return 'Pora na wieczorny pomiar ciśnienia. Najlepiej przed kolacją.';
+  return 'Pora na pomiar ciśnienia.';
+}
+
+/**
+ * Które przypomnienia wysłać teraz temu użytkownikowi. wyslaneDzis: Set godzin „GG:MM” już wysłanych dziś.
+ * Przypomnienie o godzinie T idzie od T do T+90 min (nadrabia np. restart serwera), jeśli od T−2 h nie było pomiaru.
+ */
 export function przypomnieniaDo(data, wyslaneDzis, now, tz) {
   const { dzien, minuty } = czasLokalny(now, tz);
   const cfg = C.getCfg(data);
   const dzis = C.listReadings(data, dzien, dzien);
   const out = [];
-  [
-    { pora: 'rano', h: cfg.rm, body: 'Pora na poranny pomiar ciśnienia. Najlepiej przed lekami i śniadaniem.' },
-    { pora: 'wieczor', h: cfg.re, body: 'Pora na wieczorny pomiar ciśnienia. Najlepiej przed kolacją.' }
-  ].forEach((s) => {
-    if (!(s.h >= 0)) return;
-    const start = s.h * 60;
-    if (minuty < start || minuty >= start + OKNO_PRZYP) return;
-    if (wyslaneDzis.has(s.pora)) return;
+  (cfg.rp || []).forEach((t) => {
+    const start = C.parseTime(t);
+    if (start === null || minuty < start || minuty >= start + OKNO_PRZYP) return;
+    if (wyslaneDzis.has(t)) return;
     if (dzis.some((r) => { const m = C.parseTime(r.h); return m >= start - PRZED && m <= minuty; })) return;
     const p = C.protocol(data, dzien);
     const pre = p && !p.done && !p.notStarted ? `Tydzień pomiarów: dzień ${p.dayNo} z ${C.PROTO_DAYS}. ` : '';
-    out.push({ pora: s.pora, dzien, tresc: { title: 'Ciśnienie', body: pre + s.body, url: './', tag: 'cisnienie-' + s.pora } });
+    out.push({ pora: t, dzien, tresc: { title: 'Ciśnienie', body: pre + trescPrzyp(t), url: './', tag: 'cisnienie-' + t.replace(':', '') } });
   });
   return out;
 }

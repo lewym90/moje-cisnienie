@@ -90,7 +90,7 @@ test('pusty start, dodanie pomiaru i widok startowy', async () => {
   assert.equal(doc.activeElement.id, 'ed-in-p', '82 → kolejna cyfra przekroczyłaby zakres');
   type(w, q(doc, '#ed-in-p'), '071a');
   assert.equal(q(doc, '#ed-in-p').value, '71', 'tylko cyfry, bez zera na początku');
-  assert.match(q(doc, '#ed-preview').textContent, /Prawidłowe ciśnienie/);
+  assert.match(q(doc, '#ed-preview').textContent, /Podwyższone ciśnienie/, '128/82 wg PTNT/PTK 2024');
   click(w, q(doc, '[data-action="ed-tag"][data-tag="przed"]'));
   click(w, q(doc, '[data-action="ed-tag"][data-tag="po"]'));
   click(w, q(doc, '[data-action="ed-arm"][data-a="L"]'));
@@ -201,7 +201,7 @@ test('wszystkie widoki rysują się bez błędów (z danymi i bez)', async () =>
       if (data === d) assert.ok(q(doc, '.chart'), 'wykres ' + p);
     }
     if (data === d) {
-      assert.match(q(doc, '.view').textContent, /Nieregularne bicie serca zaznaczono/);
+      assert.match(q(doc, '.view').textContent, /Nieregularne bicie serca.*Zaznaczono je 14 razy/);
       click(w, q(doc, '[data-action="proto-start"]'));
       assert.match(q(doc, '.view').textContent, /dzień 1 z 7/);
       click(w, q(doc, '.tabbar [data-view="history"]'));
@@ -218,10 +218,14 @@ test('cel i godziny przypomnień zapisują się w danych', async () => {
   click(w, q(doc, '.tabbar [data-view="settings"]'));
   click(w, q(doc, '[data-action="tgt"][data-f="ts"][data-d="-5"]'));
   assert.equal(C.getCfg(stored(w)).ts, 130);
-  const sel = q(doc, '#rm-select');
-  sel.value = '7';
-  sel.dispatchEvent(new w.Event('change', { bubbles: true }));
-  assert.equal(C.getCfg(stored(w)).rm, 7);
+  click(w, q(doc, '[data-action="rp-del"][data-i="0"]'));
+  assert.deepEqual(C.getCfg(stored(w)).rp, ['20:00']);
+  click(w, q(doc, '[data-action="rp-add"]'));
+  assert.deepEqual(C.getCfg(stored(w)).rp, ['08:00', '20:00']);
+  const tin = q(doc, '.rp-in[data-i="0"]');
+  tin.value = '06:45';
+  tin.dispatchEvent(new w.Event('change', { bubbles: true }));
+  assert.deepEqual(C.getCfg(stored(w)).rp, ['06:45', '20:00']);
   const name = q(doc, '#name-input');
   name.value = '  Jan  Kowalski ';
   name.dispatchEvent(new w.Event('change', { bubbles: true }));

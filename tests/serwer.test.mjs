@@ -103,7 +103,8 @@ test('przypomnienia: pora, świeży pomiar, raz dziennie, tylko urządzenia z pu
   // 21.11.2026 08:05 czasu polskiego = 07:05 UTC; Anna ma pomiar 21.11 tylko wieczorem (20:10)
   const t = new Date('2026-11-21T07:05:00Z');
   assert.equal(await S.sprawdzPrzypomnienia(t), 1);
-  assert.equal(wyslane[0].tresc.tag, 'cisnienie-rano');
+  assert.equal(wyslane[0].tresc.tag, 'cisnienie-0800');
+  assert.match(wyslane[0].tresc.body, /poranny/);
   assert.doesNotMatch(wyslane[0].tresc.body, /\d{2,3}\/\d{2,3}/);
   assert.equal(await S.sprawdzPrzypomnienia(new Date('2026-11-21T07:30:00Z')), 0, 'drugi raz tego samego dnia nie');
   // wieczorem jest pomiar 20:10 → brak przypomnienia o 20:00? przypomnienie 20:00 przed pomiarem: pomiar ≥ 18:00 jest, więc nic
@@ -117,10 +118,16 @@ test('przypomnienia: pora, świeży pomiar, raz dziennie, tylko urządzenia z pu
 });
 
 test('przypomnienia w strefie użytkownika i z tygodniem pomiarów', () => {
-  let d = C.setCfg(C.emptyData(), { rm: 7, ps: '2026-11-20' }, 1);
+  let d = C.setCfg(C.emptyData(), { rp: ['07:00', '13:30'], ps: '2026-11-20' }, 1);
   const p = S.przypomnieniaDo(d, new Set(), new Date('2026-11-22T06:10:00Z'), 'Europe/Warsaw');
   assert.equal(p.length, 1); assert.match(p[0].tresc.body, /dzień 3 z 7/);
   assert.equal(S.przypomnieniaDo(d, new Set(), new Date('2026-11-22T06:10:00Z'), 'Europe/London').length, 0, '06:10 w Londynie to przed 7:00');
+  // dowolna godzina: 13:30 (12:35 UTC zimą)
+  const p2 = S.przypomnieniaDo(d, new Set(), new Date('2026-11-22T12:35:00Z'), 'Europe/Warsaw');
+  assert.equal(p2.length, 1); assert.equal(p2[0].pora, '13:30'); assert.match(p2[0].tresc.body, /Pora na pomiar ciśnienia/);
+  assert.equal(S.przypomnieniaDo(d, new Set(['13:30']), new Date('2026-11-22T12:35:00Z'), 'Europe/Warsaw').length, 0);
+  assert.equal(S.przypomnieniaDo(d, new Set(), new Date('2026-11-22T14:05:00Z'), 'Europe/Warsaw').length, 0, 'po 90 minutach już nie');
+  assert.equal(S.przypomnieniaDo(C.setCfg(d, { rp: [] }, 2), new Set(), new Date('2026-11-22T06:10:00Z'), 'Europe/Warsaw').length, 0);
   assert.deepEqual(S.czasLokalny(new Date('2026-07-01T06:05:00Z'), 'Europe/Warsaw'), { dzien: '2026-07-01', minuty: 8 * 60 + 5 });
 });
 

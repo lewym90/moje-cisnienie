@@ -37,3 +37,8 @@
   body.printing { background: #fff; }
   .noprint { display: none; }
 }
+.rep .cf-elev { fill: var(--c-high); } .rep .cf-ht { fill: var(--c-g2); }
+.rep .cb-elev { --cat: var(--c-high); } .rep .cb-ht { --cat: var(--c-g2); }
+.rep-an { font-size: 11px; margin: 0 0 12px; padding: 8px 10px; border: 1px solid #ecdde1; border-radius: 8px; break-inside: avoid; }
+.rep-an ul { margin: 4px 0 0; padding-left: 16px; }
+.rep-an li { margin: 2px 0; }

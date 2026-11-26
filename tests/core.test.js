@@ -3,15 +3,71 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const C = require('../js/core.js');
 
-test('kategorie ESH 2023 na granicach', () => {
+test('kategorie PTNT/PTK 2024 na granicach', () => {
   const cases = [
-    [119, 79, 'opt'], [120, 79, 'norm'], [119, 80, 'norm'], [129, 84, 'norm'], [130, 70, 'high'], [125, 85, 'high'],
-    [139, 89, 'high'], [140, 60, 'g1'], [120, 90, 'g1'], [159, 99, 'g1'], [160, 80, 'g2'], [150, 100, 'g2'],
-    [179, 109, 'g2'], [180, 90, 'g3'], [150, 110, 'g3'], [89, 59, 'low'], [100, 59, 'low'], [89, 70, 'low'], [150, 55, 'g1']
+    [119, 69, 'opt'], [120, 69, 'elev'], [119, 70, 'elev'], [118, 75, 'elev'], [139, 89, 'elev'],
+    [140, 60, 'ht'], [120, 90, 'ht'], [180, 110, 'ht'], [89, 59, 'low'], [100, 59, 'low'], [89, 65, 'low'],
+    [150, 55, 'ht'], [125, 55, 'elev'], [90, 60, 'opt']
   ];
   for (const [s, d, id] of cases) assert.equal(C.classify(s, d).id, id, `${s}/${d}`);
+  assert.equal(C.CATS.length, 4);
   assert.equal(C.isCrisis(180, 80), true);
   assert.equal(C.isCrisis(179, 109), false);
+});
+
+test('godziny przypomnień: lista, porządek, migracja ze starych danych', () => {
+  assert.deepEqual(C.getCfg(C.emptyData()).rp, ['08:00', '20:00']);
+  let d = C.setCfg(C.emptyData(), { rp: ['21:15', '06:45', '21:15', '25:00', 'x', '12:00'] }, 5);
+  assert.deepEqual(C.getCfg(d).rp, ['06:45', '12:00', '21:15']);
+  assert.deepEqual(C.getCfg(C.parseSerialized(C.serialize(d)).data).rp, ['06:45', '12:00', '21:15']);
+  d = C.setCfg(d, { rp: ['01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00'] }, 6);
+  assert.equal(C.getCfg(d).rp.length, 6);
+  d = C.setCfg(d, { rp: [] }, 7);
+  assert.deepEqual(C.getCfg(C.parseSerialized(C.serialize(d)).data).rp, [], 'pusta lista = wyłączone');
+  const old = C.validate({ app: 'cisnienie', r: {}, cfg: { ts: 135, td: 85, rm: 7, re: -1, nm: '', ps: '', t: 3 } }).data;
+  assert.deepEqual(C.getCfg(old).rp, ['07:00']);
+  const old2 = C.validate({ app: 'cisnienie', r: {}, cfg: { ts: 135, td: 85, rm: -1, re: -1, nm: '', ps: '', t: 3 } }).data;
+  assert.deepEqual(C.getCfg(old2).rp, []);
+});
+
+test('analiza serii pomiarów', () => {
+  const day = (i) => C.addDays('2026-11-01', i);
+  const mk = (n, f) => { const l = []; for (let i = 0; i < n; i++) l.push(f(i)); return l; };
+  // za mało danych
+  let a = C.analysis(mk(5, (i) => rec(day(i), '07:30', 150, 95)));
+  assert.equal(a.enough, false);
+  assert.ok(a.findings.some((x) => /Za mało/.test(x.title)));
+  // średnia poniżej 135/85, rano i wieczór podobne
+  const ok = [].concat(mk(7, (i) => rec(day(i), '07:30', 125, 78)), mk(7, (i) => rec(day(i), '20:30', 122, 76)));
+  a = C.analysis(ok);
+  assert.equal(a.enough, true);
+  assert.ok(a.findings.some((x) => x.kind === 'ok' && /poniżej granicy/.test(x.title)));
+  assert.ok(a.findings.some((x) => /Podobne ciśnienie/.test(x.title)));
+  // nadciśnienie poranne
+  const mor = [].concat(mk(7, (i) => rec(day(i), '07:30', 145, 88)), mk(7, (i) => rec(day(i), '20:30', 122, 76)));
+  a = C.analysis(mor);
+  assert.ok(a.findings.some((x) => /Wyższe ciśnienie rano/.test(x.title)));
+  // izolowane skurczowe
+  a = C.analysis(mk(14, (i) => rec(day(i % 7), i < 7 ? '07:30' : '20:30', 150, 75)));
+  assert.ok(a.findings.some((x) => x.kind === 'warn' && /głównie ciśnienie skurczowe/.test(x.text)));
+  // biały fartuch i nadciśnienie maskowane
+  const office = (s, d) => Object.assign(rec(day(8), '10:00', s, d), { g: ['gabinet'] });
+  a = C.analysis(ok.concat([office(150, 92), office(148, 90)]));
+  assert.ok(a.findings.some((x) => /białego fartucha/.test(x.title)));
+  assert.equal(a.n, 14, 'pomiary u lekarza nie wchodzą do średniej domowej');
+  a = C.analysis(mor.map((r) => Object.assign({}, r, { s: 140, di: 88 })).concat([office(130, 80)]));
+  assert.ok(a.findings.some((x) => /maskowane/.test(x.title)));
+  // arytmia, bardzo wysokie i tętno
+  const odd = ok.map((r, i) => Object.assign({}, r, { p: 105, g: i === 0 ? ['arytmia'] : [] }));
+  odd.push(rec(day(3), '12:00', 185, 100));
+  a = C.analysis(odd);
+  assert.ok(a.findings.some((x) => /Nieregularne bicie/.test(x.title)));
+  assert.ok(a.findings.some((x) => /Bardzo wysokie/.test(x.title)));
+  assert.ok(a.findings.some((x) => /Szybkie tętno/.test(x.title)));
+  // przed / po lekach
+  const meds = [].concat(mk(7, (i) => Object.assign(rec(day(i), '07:00', 150, 90), { g: ['przed'] })), mk(7, (i) => Object.assign(rec(day(i), '20:00', 130, 80), { g: ['po'] })));
+  a = C.analysis(meds);
+  assert.ok(a.findings.some((x) => /Przed lekami i po lekach/.test(x.title) && /różnica 20 mmHg/.test(x.text)));
 });
 
 test('sprawdzanie wartości', () => {
@@ -80,7 +136,7 @@ test('statystyki, pory dnia i cel', () => {
   assert.equal(st.n, 3); assert.equal(st.s, 130); assert.equal(st.di, 85); assert.equal(st.p, 73); assert.equal(st.pn, 2);
   assert.equal(st.inTarget, 2); assert.equal(st.inTargetPct, 67);
   assert.equal(st.maxS, 140); assert.equal(st.minDi, 80); assert.equal(st.minP, 70);
-  assert.equal(st.cats.g1, 1);
+  assert.equal(st.cats.ht, 1);
   assert.equal(C.dayPart('03:59'), 'noc'); assert.equal(C.dayPart('04:00'), 'rano'); assert.equal(C.dayPart('11:59'), 'rano');
   assert.equal(C.dayPart('12:00'), 'dzien'); assert.equal(C.dayPart('17:00'), 'wieczor'); assert.equal(C.dayPart('23:59'), 'wieczor');
   assert.equal(C.stats([]).n, 0);
@@ -140,7 +196,6 @@ test('wnioski i nagłówek', () => {
   const l = [];
   for (let i = 0; i < 14; i++) l.push(rec(C.addDays('2026-11-01', i), '07:30', 150 - i * 2, 92 - i, 70), rec(C.addDays('2026-11-01', i), '20:30', 135 - i * 2, 85 - i, 68));
   const ins = C.insights(l, { ts: 135, td: 85 }, '2026-11-01', '2026-11-14');
-  assert.ok(ins.some((x) => /Rano ciśnienie skurczowe jest średnio o 15 mmHg wyższe/.test(x.text)));
   assert.ok(ins.some((x) => /spadło/.test(x.text)));
   const hl = C.headline(l, { ts: 135, td: 85 }, '2026-11-01', '2026-11-14');
   assert.equal(hl.title, 'Ciśnienie spada');

@@ -6,7 +6,7 @@
  *     Przy scalaniu danych z kilku urządzeń wygrywa nowsza wersja (scalanie jest przemienne i idempotentne).
  *  2. Usunięcie pomiaru zostawia „znacznik usunięcia”, więc drugie urządzenie nie przywróci go przy synchronizacji.
  *  3. Średnie i statystyki są zawsze wyliczane z pomiarów, nigdy zapisywane.
- *  4. Kategorie ciśnienia według wytycznych ESH 2023 (decyduje wyższa z kategorii skurczowego i rozkurczowego).
+ *  4. Kategorie ciśnienia według wytycznych PTNT/PTK 2024 i ESC 2024 (decyduje wyższa z kategorii skurczowego i rozkurczowego).
  */
 (function (root, factory) {
   'use strict';
@@ -172,25 +172,24 @@
     return s >= 230 || s < 75 || di >= 140 || di < 40 || (s - di) < 15 || (!!p && (p < 40 || p > 180));
   }
 
+  // Klasyfikacja PTNT/PTK 2024 (zgodna z ESC 2024): optymalne < 120/70, podwyższone 120–139/70–89, nadciśnienie ≥ 140/90.
+  // „Niskie” (< 90/60) to dodatkowa, praktyczna kategoria aplikacji – wytyczne jej nie definiują.
   var CATS = [
     { id: 'low', label: 'Niskie', long: 'Niskie ciśnienie', range: 'poniżej 90/60' },
-    { id: 'opt', label: 'Optymalne', long: 'Optymalne ciśnienie', range: 'poniżej 120/80' },
-    { id: 'norm', label: 'Prawidłowe', long: 'Prawidłowe ciśnienie', range: '120–129 / 80–84' },
-    { id: 'high', label: 'Wysokie prawidłowe', long: 'Wysokie prawidłowe ciśnienie', range: '130–139 / 85–89' },
-    { id: 'g1', label: 'Nadciśnienie 1°', long: 'Nadciśnienie 1. stopnia', range: '140–159 / 90–99' },
-    { id: 'g2', label: 'Nadciśnienie 2°', long: 'Nadciśnienie 2. stopnia', range: '160–179 / 100–109' },
-    { id: 'g3', label: 'Nadciśnienie 3°', long: 'Nadciśnienie 3. stopnia', range: '180 / 110 i więcej' }
+    { id: 'opt', label: 'Optymalne', long: 'Optymalne ciśnienie', range: 'poniżej 120/70' },
+    { id: 'elev', label: 'Podwyższone', long: 'Podwyższone ciśnienie', range: '120–139 / 70–89' },
+    { id: 'ht', label: 'Nadciśnienie', long: 'Nadciśnienie', range: '140/90 i więcej' }
   ];
+  var GUIDE = 'PTNT/PTK 2024';
 
   function catLevel(s, di) {
-    var ls = s >= 180 ? 6 : s >= 160 ? 5 : s >= 140 ? 4 : s >= 130 ? 3 : s >= 120 ? 2 : 1;
-    var ld = di >= 110 ? 6 : di >= 100 ? 5 : di >= 90 ? 4 : di >= 85 ? 3 : di >= 80 ? 2 : 1;
-    var l = Math.max(ls, ld);
-    if (l === 1 && (s < 90 || di < 60)) return 0;
-    return l;
+    if (s >= 140 || di >= 90) return 3;
+    if (s >= 120 || di >= 70) return 2;
+    if (s < 90 || di < 60) return 0;
+    return 1;
   }
 
-  /** Kategoria pomiaru (ESH 2023): { id, label, long, range, level 0–6 }. */
+  /** Kategoria pomiaru (PTNT/PTK 2024): { id, label, long, range, level 0–3 }. */
   function classify(s, di) {
     var l = catLevel(s, di);
     var c = CATS[l];
@@ -210,7 +209,8 @@
     { id: 'stres', label: 'Stres' },
     { id: 'kawa', label: 'Po kawie' },
     { id: 'glowa', label: 'Ból głowy' },
-    { id: 'zle', label: 'Złe samopoczucie' }
+    { id: 'zle', label: 'Złe samopoczucie' },
+    { id: 'gabinet', label: 'U lekarza' }
   ];
   var TAG_IDS = TAGS.map(function (t) { return t.id; });
 
@@ -243,15 +243,23 @@
    * data = { v: 1, r: { "<id>": rekord }, cfg?: ustawienia wspólne }
    * Rekord pomiaru: { d: "RRRR-MM-DD", h: "GG:MM", s, di, p (0 = brak), a?: "L"|"P", g?: [okoliczności], n?: notatka, t }
    * Znacznik usunięcia: { x: 1, t }
-   * cfg = { ts, td: cel (poniżej), rm, re: godzina przypomnienia rano/wieczorem (−1 = wyłączone),
+   * cfg = { ts, td: cel (poniżej), rp: godziny przypomnień ["GG:MM", …] (pusta lista = wyłączone),
    *         nm: imię i nazwisko do raportu, ps: początek tygodnia pomiarów ("" = brak), t }
    */
 
   var ID_RE = /^[A-Za-z0-9_-]{4,40}$/;
 
-  var CFG_DEFAULT = { ts: 135, td: 85, rm: 8, re: 20, nm: '', ps: '', t: 0 };
-  var RM_HOURS = [5, 6, 7, 8, 9, 10, 11];
-  var RE_HOURS = [17, 18, 19, 20, 21, 22, 23];
+  var CFG_DEFAULT = { ts: 135, td: 85, rp: ['08:00', '20:00'], nm: '', ps: '', t: 0 };
+  var MAX_RP = 6;
+
+  /** Lista godzin przypomnień: poprawne „GG:MM”, bez powtórzeń, posortowana, najwyżej 6. */
+  function cleanTimes(a) {
+    if (!Array.isArray(a)) return null;
+    var out = [];
+    a.forEach(function (t) { if (typeof t === 'string' && parseTime(t) !== null && out.indexOf(t) < 0) out.push(t); });
+    out.sort();
+    return out.slice(0, MAX_RP);
+  }
 
   function emptyData() { return { v: 1, r: {} }; }
 
@@ -265,6 +273,7 @@
     var c = data && data.cfg;
     var o = {};
     Object.keys(CFG_DEFAULT).forEach(function (k) { o[k] = c && c[k] !== undefined ? c[k] : CFG_DEFAULT[k]; });
+    o.rp = (o.rp || []).slice();
     return o;
   }
 
@@ -274,8 +283,15 @@
     o.ts = Number.isInteger(c.ts) && c.ts >= 90 && c.ts <= 200 ? c.ts : CFG_DEFAULT.ts;
     o.td = Number.isInteger(c.td) && c.td >= 50 && c.td <= 130 ? c.td : CFG_DEFAULT.td;
     if (o.td >= o.ts) { o.ts = CFG_DEFAULT.ts; o.td = CFG_DEFAULT.td; }
-    o.rm = c.rm === -1 || RM_HOURS.indexOf(c.rm) >= 0 ? c.rm : CFG_DEFAULT.rm;
-    o.re = c.re === -1 || RE_HOURS.indexOf(c.re) >= 0 ? c.re : CFG_DEFAULT.re;
+    var rp = cleanTimes(c.rp);
+    if (!rp) {
+      // dane z wersji 1.0–1.2: godzina rano (rm) i wieczorem (re), −1 = wyłączone
+      rp = [];
+      [c.rm, c.re].forEach(function (h) { if (Number.isInteger(h) && h >= 0 && h <= 23) rp.push(pad(h) + ':00'); });
+      if (c.rm === undefined && c.re === undefined) rp = CFG_DEFAULT.rp.slice();
+      rp = cleanTimes(rp);
+    }
+    o.rp = rp;
     o.nm = normalizeName(c.nm);
     o.ps = typeof c.ps === 'string' && parseKey(c.ps) ? c.ps : '';
     o.t = Number.isFinite(c.t) && c.t >= 0 ? Math.floor(c.t) : 0;
@@ -293,7 +309,7 @@
   }
 
   function cfgString(c) {
-    return [c.ts, c.td, c.rm, c.re, c.nm, c.ps, c.t].join('|');
+    return [c.ts, c.td, (c.rp || []).join(','), c.nm, c.ps, c.t].join('|');
   }
 
   function recString(r) {
@@ -360,7 +376,7 @@
     var cfgBlock = '';
     if (data.cfg) {
       var c = data.cfg;
-      cfgBlock = ',\n  "cfg": {"ts": ' + c.ts + ', "td": ' + c.td + ', "rm": ' + c.rm + ', "re": ' + c.re +
+      cfgBlock = ',\n  "cfg": {"ts": ' + c.ts + ', "td": ' + c.td + ', "rp": ' + JSON.stringify(c.rp || []) +
         ', "nm": ' + JSON.stringify(c.nm) + ', "ps": ' + JSON.stringify(c.ps) + ', "t": ' + c.t + '}';
     }
     return '{\n  "app": "' + APP_ID + '",\n  "v": 1,\n  "r": {\n' + lines.join(',\n') + (lines.length ? '\n' : '') + '  }' + cfgBlock + '\n}\n';
@@ -566,7 +582,7 @@
     };
   }
 
-  /* ---------- Tydzień pomiarów przed wizytą (zalecenia ESH / PTNT) ---------- */
+  /* ---------- Tydzień pomiarów przed wizytą (zalecenia PTNT/PTK, ESH) ---------- */
 
   var PROTO_DAYS = 7;
 
@@ -616,15 +632,6 @@
       }
       out.push({ kind: st.inTargetPct >= 70 ? 'ok' : 'info', text: st.inTargetPct + '% pomiarów mieści się w celu (' + st.inTarget + ' z ' + st.n + ').' });
     }
-    var mor = stats(filterPart(list, 'rano')), eve = stats(filterPart(list, 'wieczor'));
-    if (mor.n >= 3 && eve.n >= 3) {
-      var dS = mor.s - eve.s;
-      if (Math.abs(dS) >= 5) {
-        out.push({ kind: 'info', text: 'Rano ciśnienie skurczowe jest średnio o ' + Math.abs(dS) + ' mmHg ' + (dS > 0 ? 'wyższe' : 'niższe') + ' niż wieczorem (' + mor.s + '/' + mor.di + ' wobec ' + eve.s + '/' + eve.di + ').' });
-      } else {
-        out.push({ kind: 'ok', text: 'Ciśnienie rano i wieczorem jest podobne (' + mor.s + '/' + mor.di + ' i ' + eve.s + '/' + eve.di + ').' });
-      }
-    }
     if (from && to && daysBetween(from, to) >= 13) {
       var mid = addDays(from, Math.floor((daysBetween(from, to) + 1) / 2));
       var a = stats(list.filter(function (r) { return r.d < mid; }));
@@ -635,12 +642,6 @@
         else if (d >= 5) out.push({ kind: 'warn', text: 'W drugiej połowie okresu ciśnienie skurczowe wzrosło średnio o ' + d + ' mmHg (z ' + a.s + ' do ' + b.s + ').' });
         else out.push({ kind: 'ok', text: 'Ciśnienie jest stabilne: średnie w obu połowach okresu różnią się o mniej niż 5 mmHg.' });
       }
-    }
-    if (st.crisis) {
-      out.push({ kind: 'warn', text: 'Ciśnienie ' + st.crisis + ' ' + plural(st.crisis, 'raz przekroczyło', 'razy przekroczyło', 'razy przekroczyło') + ' 180/110 mmHg. Pokaż te pomiary lekarzowi.' });
-    }
-    if (st.arrhythmia) {
-      out.push({ kind: 'warn', text: 'Nieregularne bicie serca zaznaczono ' + st.arrhythmia + ' ' + plural(st.arrhythmia, 'raz', 'razy', 'razy') + '. Pokaż te pomiary lekarzowi.' });
     }
     if (st.pn >= 3) {
       out.push({ kind: 'info', text: 'Średnie tętno: ' + st.p + ' uderzeń na minutę (od ' + st.minP + ' do ' + st.maxP + ').' });
@@ -677,6 +678,104 @@
     var text = 'Twoje ciśnienie' + (phrase ? ' ' + phrase : '') + (inT ? ' jest w normie' : ' jest powyżej celu') +
       ' (średnio ' + st.s + '/' + st.di + ' mmHg, cel: poniżej ' + target.ts + '/' + target.td + ').';
     return { kind: inT ? 'ok' : 'warn', title: title, text: text };
+  }
+
+  /* ---------- Analiza serii pomiarów (wskazówki, nie diagnoza) ---------- */
+
+  var HOME_S = 135, HOME_D = 85; // granica nadciśnienia dla średniej z pomiarów domowych (PTNT/PTK, ESH, ESC)
+  var OFFICE_S = 140, OFFICE_D = 90; // granica dla pomiarów w gabinecie
+  var MIN_N = 12, MIN_DAYS = 4; // tydzień pomiarów: co najmniej 12 pomiarów; tu dodatkowo z co najmniej 4 dni
+
+  function isOffice(r) { return (r.g || []).indexOf('gabinet') >= 0; }
+  function above(st, s, d) { return st.s >= s || st.di >= d; }
+  function bpTxt(st) { return st.s + '/' + st.di + ' mmHg'; }
+
+  /**
+   * Analiza serii pomiarów według progów z wytycznych. Zwraca wskazówki do pokazania lekarzowi – nie diagnozę.
+   * Pomiary oznaczone „U lekarza” są liczone osobno (porównanie gabinet / dom).
+   * Zwraca { enough, n, days, needN, needDays, home, findings: [{ kind: 'ok'|'info'|'warn', title, text }] }.
+   */
+  function analysis(list) {
+    var home = list.filter(function (r) { return !isOffice(r); });
+    var office = list.filter(isOffice);
+    var days = {};
+    home.forEach(function (r) { days[r.d] = 1; });
+    var nDays = Object.keys(days).length;
+    var st = stats(home);
+    var out = { enough: st.n >= MIN_N && nDays >= MIN_DAYS, n: st.n, days: nDays, needN: MIN_N, needDays: MIN_DAYS, home: st, findings: [] };
+    var f = out.findings;
+
+    // bezpieczeństwo – zawsze, niezależnie od liczby pomiarów
+    var crisis = list.filter(function (r) { return isCrisis(r.s, r.di); });
+    if (crisis.length) {
+      f.push({ kind: 'warn', title: 'Bardzo wysokie wartości', text: 'Ciśnienie ' + crisis.length + ' ' + plural(crisis.length, 'raz osiągnęło', 'razy osiągnęło', 'razy osiągnęło') + ' 180/110 mmHg lub więcej. Takie wyniki warto jak najszybciej omówić z lekarzem.' });
+    }
+    var arr = list.filter(function (r) { return (r.g || []).indexOf('arytmia') >= 0; });
+    if (arr.length) {
+      f.push({ kind: 'warn', title: 'Nieregularne bicie serca', text: 'Zaznaczono je ' + arr.length + ' ' + plural(arr.length, 'raz', 'razy', 'razy') + '. Ciśnieniomierz pokazuje taki symbol, gdy rytm serca podczas pomiaru jest nierówny – jedną z możliwych przyczyn jest migotanie przedsionków. Powiedz o tym lekarzowi; może zlecić EKG.' });
+    }
+    var lowSym = list.filter(function (r) { return classify(r.s, r.di).id === 'low' && ((r.g || []).indexOf('zle') >= 0 || (r.g || []).indexOf('glowa') >= 0); });
+    if (lowSym.length) {
+      f.push({ kind: 'info', title: 'Niskie ciśnienie z objawami', text: 'Niskie ciśnienie (poniżej 90/60) ze złym samopoczuciem lub bólem głowy zaznaczono ' + lowSym.length + ' ' + plural(lowSym.length, 'raz', 'razy', 'razy') + '. Warto o tym wspomnieć lekarzowi, szczególnie jeśli przyjmujesz leki na ciśnienie.' });
+    }
+
+    if (!out.enough) {
+      f.push({ kind: 'info', title: 'Za mało pomiarów do analizy', text: 'Analiza potrzebuje co najmniej ' + MIN_N + ' pomiarów domowych z co najmniej ' + MIN_DAYS + ' dni (jest ' + st.n + ' ' + plural(st.n, 'pomiar', 'pomiary', 'pomiarów') + ' z ' + nDays + ' ' + plural(nDays, 'dnia', 'dni', 'dni') + '). Najlepiej zrób „Tydzień pomiarów przed wizytą”.' });
+      return out;
+    }
+
+    // 1. średnia z pomiarów domowych a granica 135/85
+    if (above(st, HOME_S, HOME_D)) {
+      var sysOnly = st.s >= HOME_S && st.di < HOME_D, diaOnly = st.di >= HOME_D && st.s < HOME_S;
+      f.push({ kind: 'warn', title: 'Średnia powyżej granicy dla pomiarów domowych',
+        text: 'Średnia z ' + st.n + ' pomiarów domowych to ' + bpTxt(st) + '. Według wytycznych średnia z pomiarów w domu wynosząca 135/85 mmHg lub więcej przemawia za nadciśnieniem tętniczym' +
+          (sysOnly ? ' – u Ciebie podwyższone jest głównie ciśnienie skurczowe (górne)' : diaOnly ? ' – u Ciebie podwyższone jest głównie ciśnienie rozkurczowe (dolne)' : '') +
+          '. Pokaż te pomiary lekarzowi.' });
+    } else {
+      f.push({ kind: 'ok', title: 'Średnia poniżej granicy dla pomiarów domowych', text: 'Średnia z ' + st.n + ' pomiarów domowych to ' + bpTxt(st) + ', czyli poniżej 135/85 mmHg – granicy nadciśnienia dla pomiarów w domu.' });
+    }
+
+    // 2. rano a wieczorem
+    var mor = stats(filterPart(home, 'rano')), eve = stats(filterPart(home, 'wieczor'));
+    if (mor.n >= 4 && eve.n >= 4) {
+      if (above(mor, HOME_S, HOME_D) && !above(eve, HOME_S, HOME_D)) {
+        f.push({ kind: 'warn', title: 'Wyższe ciśnienie rano', text: 'Rano średnio ' + bpTxt(mor) + ', wieczorem ' + bpTxt(eve) + '. Poranna średnia 135/85 lub wyższa to tzw. nadciśnienie poranne. Jeśli bierzesz leki, lekarz może chcieć sprawdzić, czy działają przez całą dobę.' });
+      } else if (above(eve, HOME_S, HOME_D) && !above(mor, HOME_S, HOME_D)) {
+        f.push({ kind: 'info', title: 'Wyższe ciśnienie wieczorem', text: 'Wieczorem średnio ' + bpTxt(eve) + ', rano ' + bpTxt(mor) + '. Pokaż lekarzowi ten rozkład pomiarów.' });
+      } else if (Math.abs(mor.s - eve.s) >= 10) {
+        f.push({ kind: 'info', title: 'Duża różnica rano – wieczór', text: 'Ciśnienie skurczowe rano i wieczorem różni się średnio o ' + Math.abs(mor.s - eve.s) + ' mmHg (' + bpTxt(mor) + ' rano, ' + bpTxt(eve) + ' wieczorem).' });
+      } else {
+        f.push({ kind: 'ok', title: 'Podobne ciśnienie rano i wieczorem', text: 'Rano średnio ' + bpTxt(mor) + ', wieczorem ' + bpTxt(eve) + '.' });
+      }
+    }
+
+    // 3. gabinet a dom (biały fartuch / nadciśnienie maskowane)
+    if (office.length) {
+      var of = stats(office);
+      var homeHigh = above(st, HOME_S, HOME_D), offHigh = above(of, OFFICE_S, OFFICE_D);
+      if (offHigh && !homeHigh) {
+        f.push({ kind: 'info', title: 'Możliwy efekt białego fartucha', text: 'U lekarza średnio ' + bpTxt(of) + ' (' + office.length + ' ' + plural(office.length, 'pomiar', 'pomiary', 'pomiarów') + '), w domu ' + bpTxt(st) + '. Wyższe ciśnienie w gabinecie (140/90 i więcej) przy prawidłowym w domu (poniżej 135/85) to tzw. nadciśnienie białego fartucha. Ocenia je lekarz.' });
+      } else if (!offHigh && homeHigh) {
+        f.push({ kind: 'warn', title: 'Możliwe nadciśnienie maskowane', text: 'U lekarza średnio ' + bpTxt(of) + ', a w domu ' + bpTxt(st) + '. Prawidłowe ciśnienie w gabinecie (poniżej 140/90) przy podwyższonym w domu (135/85 i więcej) to tzw. nadciśnienie maskowane – łatwo je przeoczyć. Pokaż lekarzowi pomiary domowe.' });
+      } else {
+        f.push({ kind: 'ok', title: 'Pomiary u lekarza zgodne z domowymi', text: 'U lekarza średnio ' + bpTxt(of) + ', w domu ' + bpTxt(st) + '.' });
+      }
+    }
+
+    // 4. przed lekami a po lekach
+    var przed = stats(home.filter(function (r) { return (r.g || []).indexOf('przed') >= 0; }));
+    var po = stats(home.filter(function (r) { return (r.g || []).indexOf('po') >= 0; }));
+    if (przed.n >= 3 && po.n >= 3) {
+      var dd = przed.s - po.s;
+      f.push({ kind: 'info', title: 'Przed lekami i po lekach', text: 'Przed lekami średnio ' + bpTxt(przed) + ', po lekach ' + bpTxt(po) + ' (różnica ' + (dd >= 0 ? dd : -dd) + ' mmHg ciśnienia skurczowego' + (dd < 0 ? ', po lekach wyżej' : '') + ').' });
+    }
+
+    // 5. tętno spoczynkowe (definicje: tachykardia > 100/min, wyraźna bradykardia < 50/min)
+    if (st.pn >= 6) {
+      if (st.p > 100) f.push({ kind: 'warn', title: 'Szybkie tętno', text: 'Średnie tętno w spoczynku to ' + st.p + ' uderzeń na minutę (powyżej 100). Powiedz o tym lekarzowi.' });
+      else if (st.p < 50) f.push({ kind: 'info', title: 'Wolne tętno', text: 'Średnie tętno w spoczynku to ' + st.p + ' uderzeń na minutę (poniżej 50). U osób wytrenowanych bywa to normalne – jeśli masz zawroty głowy lub osłabienie, powiedz lekarzowi.' });
+    }
+    return out;
   }
 
   /* ---------- CSV ---------- */
@@ -816,14 +915,14 @@
     isLeap: isLeap, daysInMonth: daysInMonth, pad: pad, dateKey: dateKey, parseKey: parseKey, weekday: weekday, weekdayOfKey: weekdayOfKey,
     todayKey: todayKey, nowTime: nowTime, addDays: addDays, daysBetween: daysBetween, longDate: longDate, shortDate: shortDate, plDate: plDate,
     parseTime: parseTime, plural: plural, dayPart: dayPart, PART_LABEL: PART_LABEL,
-    LIMITS: LIMITS, checkValues: checkValues, unusualValues: unusualValues, CATS: CATS, classify: classify, isCrisis: isCrisis,
+    LIMITS: LIMITS, checkValues: checkValues, unusualValues: unusualValues, CATS: CATS, GUIDE: GUIDE, classify: classify, isCrisis: isCrisis,
     TAGS: TAGS, tagLabel: tagLabel, cleanTags: cleanTags, NOTE_MAX: NOTE_MAX, normalizeNote: normalizeNote, NAME_MAX: NAME_MAX, normalizeName: normalizeName,
-    CFG_DEFAULT: CFG_DEFAULT, RM_HOURS: RM_HOURS, RE_HOURS: RE_HOURS, getCfg: getCfg, setCfg: setCfg,
+    CFG_DEFAULT: CFG_DEFAULT, MAX_RP: MAX_RP, cleanTimes: cleanTimes, getCfg: getCfg, setCfg: setCfg,
     emptyData: emptyData, validate: validate, serialize: serialize, parseSerialized: parseSerialized, sameData: sameData, merge: merge,
     newId: newId, getReading: getReading, setReading: setReading, listReadings: listReadings, countReadings: countReadings,
     lastReading: lastReading, firstDate: firstDate,
     stats: stats, filterPart: filterPart, PERIODS: PERIODS, periodRange: periodRange, weekStart: weekStart, chartPoints: chartPoints,
-    PROTO_DAYS: PROTO_DAYS, protocol: protocol, insights: insights, headline: headline,
+    PROTO_DAYS: PROTO_DAYS, protocol: protocol, insights: insights, headline: headline, analysis: analysis,
     toCsv: toCsv, parseCsv: parseCsv, addEntries: addEntries
   };
 });

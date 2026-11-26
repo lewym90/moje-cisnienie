@@ -980,3 +980,27 @@ body.no-nav .main { padding-bottom: calc(24px + var(--safe-b)); }
 :root[data-theme="dark"] .auth-form .field label { color: var(--ink-2); }
 .auth .home-icons { display: none; }
 .auth .logo { margin-top: 0; }
+
+/* ===== Kategorie PTNT/PTK 2024 ===== */
+.cb-elev { --cat: var(--c-high); } .cb-ht { --cat: var(--c-g2); }
+.cf-elev { fill: var(--c-high); } .cf-ht { fill: var(--c-g2); }
+
+/* ===== Lista przypomnień ===== */
+.rp-list { display: grid; gap: 10px; margin-top: 12px; }
+.rp-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 44px; align-items: center; gap: 10px; background: var(--surface-2); border-radius: 16px; padding: 8px 8px 8px 14px; }
+.rp-row .ic { color: var(--accent); width: 22px; height: 22px; }
+.rp-row .input { min-height: 46px; font-size: 18px; font-weight: 650; background: var(--surface); }
+.rp-row .icon-btn { width: 44px; height: 44px; color: var(--danger-text); }
+.rp-row .icon-btn .ic { color: inherit; }
+
+/* ===== Analiza pomiarów ===== */
+.findings { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
+.findings li { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 16px; background: var(--surface-2); }
+.findings li .ic { width: 24px; height: 24px; flex: none; margin-top: 1px; }
+.findings li b { display: block; font-size: 15.5px; font-weight: 650; margin-bottom: 2px; }
+.findings li span { font-size: 14px; color: var(--ink-2); line-height: 1.45; }
+.findings li.ok { background: #eef7e9; } .findings li.ok .ic { color: #34a447; }
+.findings li.warn { background: #fdf0e4; } .findings li.warn .ic { color: var(--c-g1); }
+.findings li.info .ic { color: var(--accent); }
+:root[data-theme="dark"] .findings li.ok { background: #13301d; }
+:root[data-theme="dark"] .findings li.warn { background: #3a240f; }
