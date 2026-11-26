@@ -136,7 +136,7 @@ test('walidacja: brak wartości, odwrócone wartości, przyszłość, nietypowy 
 });
 
 test('przyciski − / + startują od ostatniego pomiaru, edycja i usuwanie', async () => {
-  let d = C.setReading(C.emptyData(), 'abcd1', { d: C.todayKey(), h: '07:00', s: 131, di: 84, p: 66 }, 1);
+  let d = C.setReading(C.emptyData(), 'abcd1', { d: C.addDays(C.todayKey(), -1), h: '07:00', s: 131, di: 84, p: 66 }, 1);
   const { w, doc, errors } = boot({ localStorage: { 'cisnienie.data.v1': C.serialize(d) } });
   await tick(60);
   click(w, q(doc, '.last-card .btn.red'));
