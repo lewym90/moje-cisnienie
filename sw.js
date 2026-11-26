@@ -4,7 +4,7 @@
  * Zapytania do GitHuba (inna domena) nie są przechwytywane.
  * Przy wydawaniu nowej wersji zmień VERSION.
  */
-var VERSION = 'cisnienie-1.0.0';
+var VERSION = 'cisnienie-1.0.1';
 var ASSETS = [
   './',
   'index.html',
@@ -22,7 +22,8 @@ var ASSETS = [
   'icons/icon-maskable-512.png',
   'icons/apple-touch-icon.png',
   'icons/favicon-32.png',
-  'icons/badge-96.png'
+  'icons/badge-96.png',
+  'icons/cisnieniomierz.jpg'
 ];
 var NETWORK_TIMEOUT = 5000;
 

@@ -6,7 +6,7 @@
   var Store = window.SCStore;
   var Sync = window.SCSync;
   var APP_NAME = 'Ciśnienie';
-  var APP_VERSION = '1.0.0';
+  var APP_VERSION = '1.0.1';
   // repozytorium z kodem aplikacji (zadanie przypomnień pobiera z niego skrypt); na GitHub Pages ustalane z adresu strony
   var DEFAULT_CODE_REPO = 'lewym90/moje-cisnienie';
   // klucz publiczny powiadomień; klucz prywatny jest tylko w sekrecie VAPID_PRIVATE_KEY repozytorium z danymi
@@ -1072,17 +1072,7 @@
     p: { label: 'Puls', sub: 'opcjonalnie', unit: 'ud./min', ph: '70' }
   };
 
-  var MONITOR = '<svg class="monitor" viewBox="0 0 260 130" aria-hidden="true">' +
-    '<defs><linearGradient id="mo-b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e9dfdf"/></linearGradient>' +
-    '<linearGradient id="mo-s" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff4a5a"/><stop offset="1" stop-color="#a50f22"/></linearGradient>' +
-    '<linearGradient id="mo-c" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4446"/><stop offset="1" stop-color="#1c191a"/></linearGradient></defs>' +
-    '<ellipse cx="132" cy="120" rx="112" ry="7" fill="#000" opacity=".12"/>' +
-    '<path d="M40 104c-16 0-26-13-26-31s10-31 26-31h46v62z" fill="url(#mo-c)"/><ellipse cx="86" cy="73" rx="12" ry="31" fill="#2b2728"/><ellipse cx="86" cy="73" rx="7" ry="20" fill="#121011"/>' +
-    '<path d="M98 92c14 14 36 22 52 16" fill="none" stroke="#1c191a" stroke-width="5" stroke-linecap="round"/>' +
-    '<rect x="132" y="18" width="104" height="96" rx="22" fill="url(#mo-b)" stroke="#d8caca"/>' +
-    '<rect x="146" y="30" width="76" height="48" rx="10" fill="url(#mo-s)"/>' +
-    '<path d="M151 56h14l5-10 7 20 6-15 4 5h20" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' +
-    '<rect x="166" y="88" width="36" height="13" rx="6.5" fill="#e3293f"/><circle cx="214" cy="94.5" r="5" fill="#d9cccc"/></svg>';
+  var MONITOR = '<img class="monitor-img" src="icons/cisnieniomierz.jpg" alt="" width="800" height="420" decoding="async">';
 
   function openEditor(id) {
     var r = id ? C.getReading(state.data, id) : null;

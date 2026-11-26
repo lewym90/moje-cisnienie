@@ -787,3 +787,10 @@ body.on-home { background: var(--home-bot); }
 .lc-pulse .ic { width: 36px; height: 36px; }
 .chart .gs-a { stop-opacity: .14; }
 .chart .gd-a { stop-opacity: .16; }
+.monitor-wrap { padding: 0 0 8px; }
+.monitor-img { display: block; width: 100%; max-width: 380px; height: auto; margin: 0 auto;
+  -webkit-mask-image: radial-gradient(ellipse 75% 72% at 50% 50%, #000 62%, transparent 100%);
+  mask-image: radial-gradient(ellipse 75% 72% at 50% 50%, #000 62%, transparent 100%); }
+:root[data-theme="dark"] .monitor-img { -webkit-mask-image: none; mask-image: none; border-radius: 22px; max-width: 340px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .monitor-img { -webkit-mask-image: none; mask-image: none; border-radius: 22px; max-width: 340px; } }
+@media (max-height: 760px) { .monitor-img { max-width: 260px; } }
