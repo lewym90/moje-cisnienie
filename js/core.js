@@ -660,7 +660,7 @@
   /**
    * Główny wniosek do karty na ekranie Statystyki: { kind: 'ok'|'warn', title, text }.
    */
-  function headline(list, target, from, to) {
+  function headline(list, target, from, to, phrase) {
     if (!list.length) return null;
     var st = stats(list, target);
     var inT = st.s < target.ts && st.di < target.td;
@@ -674,8 +674,8 @@
         title = d <= -5 ? 'Ciśnienie spada' : d >= 5 ? 'Ciśnienie rośnie' : 'Stabilne wartości';
       }
     }
-    var text = 'Średnia z ' + st.n + ' ' + plural(st.n, 'pomiaru', 'pomiarów', 'pomiarów') + ': ' + st.s + '/' + st.di + ' mmHg – ' +
-      (inT ? 'poniżej Twojego celu ' : 'powyżej Twojego celu ') + target.ts + '/' + target.td + '.';
+    var text = 'Twoje ciśnienie' + (phrase ? ' ' + phrase : '') + (inT ? ' jest w normie' : ' jest powyżej celu') +
+      ' (średnio ' + st.s + '/' + st.di + ' mmHg, cel: poniżej ' + target.ts + '/' + target.td + ').';
     return { kind: inT ? 'ok' : 'warn', title: title, text: text };
   }
 

@@ -89,7 +89,7 @@ test('pusty start, dodanie pomiaru i widok startowy', async () => {
   assert.equal(list.length, 1);
   assert.deepEqual([list[0].s, list[0].di, list[0].p, list[0].a], [128, 82, 71, 'L']);
   assert.deepEqual(list[0].g, ['po'], 'przed/po lekach wykluczają się');
-  assert.match(q(doc, '.lc-bp').textContent, /128\/82/);
+  assert.match(q(doc, '.lc-bp').textContent, /128 \/ 82/);
   assert.match(q(doc, '.toast').textContent, /Zapisano 128\/82/);
   // cofnij
   click(w, q(doc, '[data-action="toast-undo"]'));

@@ -6,7 +6,7 @@
   var Store = window.SCStore;
   var Sync = window.SCSync;
   var APP_NAME = 'Ciśnienie';
-  var APP_VERSION = '1.0.1';
+  var APP_VERSION = '1.1.0';
   // repozytorium z kodem aplikacji (zadanie przypomnień pobiera z niego skrypt); na GitHub Pages ustalane z adresu strony
   var DEFAULT_CODE_REPO = 'lewym90/moje-cisnienie';
   // klucz publiczny powiadomień; klucz prywatny jest tylko w sekrecie VAPID_PRIVATE_KEY repozytorium z danymi
@@ -25,6 +25,8 @@
   function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
   var ICONS = {
+    bars3: '<rect x="4.5" y="12" width="3.6" height="8" rx="1.2" fill="currentColor" stroke="none"/><rect x="10.2" y="7.5" width="3.6" height="12.5" rx="1.2" fill="currentColor" stroke="none"/><rect x="15.9" y="3.5" width="3.6" height="16.5" rx="1.2" fill="currentColor" stroke="none"/>',
+    calDots: '<rect x="3.8" y="5.5" width="16.4" height="14.5" rx="3"/><path d="M3.8 10h16.4M8.5 3.5v4M15.5 3.5v4"/><path d="M8 13.5h.01M12 13.5h.01M16 13.5h.01M8 16.8h.01M12 16.8h.01M16 16.8h.01" stroke-width="2.4"/>',
     home: '<path d="M4 11.5L12 4.5l8 7"/><path d="M6.5 10v9.5h4V15h3v4.5h4V10"/>',
     heartPulse: '<path d="M12 20.3s-7.8-4.6-7.8-10.4A4.4 4.4 0 0 1 12 7.2a4.4 4.4 0 0 1 7.8 2.7c0 5.8-7.8 10.4-7.8 10.4z"/><path d="M7.5 12.5h2.5l1.2-2.5 1.8 4.5 1.2-2h2.3"/>',
     user: '<circle cx="12" cy="8.5" r="3.7"/><path d="M4.8 20c.9-3.8 3.7-5.7 7.2-5.7s6.3 1.9 7.2 5.7"/>',
@@ -404,12 +406,23 @@
 
   /* ---------- Widok: Start ---------- */
 
-  var LOGO = '<svg class="logo" viewBox="0 0 64 56" aria-hidden="true">' +
-    '<path class="logo-h" d="M32 50S6 35 6 18.5A12.5 12.5 0 0 1 32 11.6a12.5 12.5 0 0 1 26 6.9C58 35 32 50 32 50z"/>' +
-    '<path class="logo-e" d="M11 29h11.5l4-8.5 6 17 5-12.5 3 4H53"/></svg>';
+  var LOGO = '<svg class="logo" viewBox="0 0 120 104" aria-hidden="true"><defs>' +
+    '<linearGradient id="lg-s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7a86"/><stop offset=".55" stop-color="#ff2a3e"/><stop offset="1" stop-color="#c80f26"/></linearGradient>' +
+    '<radialGradient id="lg-f" cx=".5" cy=".35" r=".7"><stop offset="0" stop-color="#6a0a16"/><stop offset="1" stop-color="#2a0308"/></radialGradient>' +
+    '<filter id="lg-g" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="4.5"/></filter></defs>' +
+    '<path d="M60 94S12 66 12 34A23 23 0 0 1 60 21.5 23 23 0 0 1 108 34c0 32-48 60-48 60z" fill="none" stroke="#ff1f35" stroke-width="9" opacity=".75" filter="url(#lg-g)"/>' +
+    '<path d="M60 94S12 66 12 34A23 23 0 0 1 60 21.5 23 23 0 0 1 108 34c0 32-48 60-48 60z" fill="url(#lg-f)" stroke="url(#lg-s)" stroke-width="5" stroke-linejoin="round"/>' +
+    '<path d="M22 54h20l7-15 11 30 9-23 6 8h23" fill="none" stroke="#ff3045" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".7" filter="url(#lg-g)"/>' +
+    '<path d="M22 54h20l7-15 11 30 9-23 6 8h23" fill="none" stroke="#ff4a5c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M22 54h20l7-15 11 30 9-23 6 8h23" fill="none" stroke="#ffd2d7" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-  var HOME_ECG = '<svg class="home-ecg" viewBox="0 0 400 90" preserveAspectRatio="none" aria-hidden="true">' +
-    '<path d="M0 78C90 78 170 74 240 66S290 60 304 60h10l7-16 9 40 10-74 10 54 7-12h16c20 0 34-2 127-6"/></svg>';
+  var ECG_D = 'M-10 152C60 150 120 146 190 140S300 132 330 131h20l9-22 11 52 13-118 13 92 9-17h22c30 0 60 1 120 4';
+  var HOME_ECG = '<svg class="home-ecg" viewBox="0 0 560 190" preserveAspectRatio="xMidYMax slice" aria-hidden="true"><defs>' +
+    '<linearGradient id="ecg-s" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff2a3e" stop-opacity="0"/><stop offset=".35" stop-color="#ff2a3e" stop-opacity=".55"/><stop offset=".62" stop-color="#ff3346"/><stop offset="1" stop-color="#ff2a3e" stop-opacity=".35"/></linearGradient>' +
+    '<filter id="ecg-g" x="-10%" y="-60%" width="120%" height="220%"><feGaussianBlur stdDeviation="5"/></filter></defs>' +
+    '<path d="' + ECG_D + '" fill="none" stroke="url(#ecg-s)" stroke-width="10" filter="url(#ecg-g)" opacity=".9"/>' +
+    '<path d="' + ECG_D + '" fill="none" stroke="url(#ecg-s)" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '<path d="' + ECG_D + '" fill="none" stroke="#ffc9cf" stroke-width="1" stroke-linejoin="round" opacity=".55"/></svg>';
 
   function nextReminder() {
     var c = cfg();
@@ -430,7 +443,7 @@
     return '<section class="last-card">' +
       '<div class="lc-head"><h2>Ostatni pomiar</h2><span>' + esc(dayLabel(last.d) + ', ' + last.h) + '</span></div>' +
       '<div class="lc-row"><button class="lc-bp num" data-action="edit" data-id="' + esc(last.id) + '" aria-label="Ostatni pomiar ' + last.s + ' na ' + last.di + ' mmHg, popraw">' +
-      '<span class="big">' + last.s + '<i>/</i>' + last.di + '</span><span class="u">mmHg</span></button>' +
+      '<span class="big">' + last.s + '<i> / </i>' + last.di + '</span><span class="u">mmHg</span></button>' +
       (last.p ? '<div class="lc-pulse">' + icon('heart', 'beat') + '<b class="num">' + last.p + '</b><span>ud./min</span></div>' : '') + '</div>' +
       '<div class="lc-status">' + statusChip(c) + '</div>' +
       '<button class="btn red block big" data-action="add">' + icon('plus') + 'Dodaj pomiar</button></section>';
@@ -502,14 +515,14 @@
       '<header class="home-top">' + HOME_ECG + '<div class="home-glow" aria-hidden="true"></div>' +
       '<div class="home-icons"><button class="round-btn" data-action="nav" data-view="settings" aria-label="Profil i ustawienia">' + icon('gear') + '</button>' +
       '<button class="round-btn" data-action="goto-remind" aria-label="Przypomnienia">' + icon('bell') + (pushOn ? '<span class="bell-dot"></span>' : '') + '</button></div>' +
-      LOGO + '<h1>' + APP_NAME + '</h1><p>Dziennik pomiarów</p></header>' +
+      '<div class="home-bokeh" aria-hidden="true"></div>' + LOGO + '<h1>' + APP_NAME + '</h1><p>Dziennik pomiarów</p></header>' +
       '<div class="home-body stack">';
     h += statusBanners();
     h += lastCard();
     h += crisisBanner();
     h += '<div class="tiles">' +
-      '<button class="tile" data-action="nav" data-view="charts">' + icon('chart') + '<span>Statystyki</span></button>' +
-      '<button class="tile" data-action="nav" data-view="history">' + icon('calendar') + '<span>Historia</span></button>' +
+      '<button class="tile" data-action="nav" data-view="charts">' + icon('bars3') + '<span>Statystyki</span></button>' +
+      '<button class="tile" data-action="nav" data-view="history">' + icon('calDots') + '<span>Historia</span></button>' +
       '<button class="tile" data-action="goto-remind">' + icon('bell') + '<span>Przypomnienia</span></button>' +
       '<button class="tile" data-action="nav" data-view="tips">' + icon('heartPulse') + '<span>Porady</span></button></div>';
     h += '<div class="next-card">' + icon('alarm', 'nc-ic') + '<div class="grow"><b>Kolejny pomiar</b><span>' + esc(nextReminder()) + '</span></div>' +
@@ -558,7 +571,7 @@
     var isNow = y === cur.y && m === cur.m;
     var first = C.firstDate(state.data);
     var canPrev = first ? from > first : false;
-    var h = pageBar('Pomiary', '', '<button class="bar-btn add" data-action="add" aria-label="Dodaj pomiar">' + icon('plus') + '</button>') + '<div class="stack">';
+    var h = pageBar('Pomiary', 'home', '<button class="bar-btn add" data-action="add" aria-label="Dodaj pomiar">' + icon('plus') + '</button>') + '<div class="stack">';
     h += '<div class="month-nav"><button class="icon-btn" data-action="hist-prev" aria-label="Poprzedni miesiąc"' + (canPrev ? '' : ' disabled') + '>' + icon('chevL') + '</button>' +
       '<div class="label">' + cap(C.MONTHS[m]) + ' ' + y + '</div>' +
       '<button class="icon-btn" data-action="hist-next" aria-label="Następny miesiąc"' + (isNow ? ' disabled' : '') + '>' + icon('chevR') + '</button></div>';
@@ -596,7 +609,7 @@
 
   function chartsView() {
     var t = target();
-    var h = pageBar('Statystyki') + '<div class="stack">';
+    var h = pageBar('Statystyki', 'home') + '<div class="stack">';
     h += periodSeg();
     var rg = C.periodRange(state.period, state.today, state.data);
     var list = C.listReadings(state.data, rg.from, rg.to);
@@ -616,7 +629,7 @@
       lineChart(cp.points, t) +
       '<p class="legend"><span class="lg sys"></span>Skurczowe<span class="lg dia"></span>Rozkurczowe<span class="lg-tgt"></span>cel ' + t.ts + '/' + t.td + '</p>' +
       '<p class="help small center">' + unitTxt + ' · ' + nPomiar(st.n) + ' · ' + catPill(c) + '</p></div>';
-    var hl = C.headline(list, t, rg.from, rg.to);
+    var hl = C.headline(list, t, rg.from, rg.to, { d7: 'w ostatnim tygodniu', d30: 'w ostatnim miesiącu', d90: 'w ostatnich 3 miesiącach', y1: 'w ostatnim roku' }[state.period]);
     if (hl) h += '<div class="headline ' + hl.kind + '">' + icon(hl.kind === 'ok' ? 'checkCircle' : 'alert') + '<div><b>' + esc(hl.title) + '</b><span>' + esc(hl.text) + '</span></div></div>';
     var pc = pulseChart(cp.points);
     if (pc) h += '<div class="card"><div class="card-head"><h2>Tętno</h2><span class="muted small">' + (st.pn ? 'od ' + st.minP + ' do ' + st.maxP : '') + '</span></div>' + pc + '</div>';
@@ -916,7 +929,7 @@
 
   function settingsView() {
     var st = state.settings, c = cfg();
-    var h = pageBar('Profil') + '<div class="stack"><div class="center-row"><span class="pill-slot">' + pillHtml() + '</span></div>';
+    var h = pageBar('Profil', 'home') + '<div class="stack"><div class="center-row"><span class="pill-slot">' + pillHtml() + '</span></div>';
     h += '<div class="card"><h2>Twój cel</h2><p class="help">Pomiar jest „w celu”, gdy oba ciśnienia są poniżej tych wartości. Domyślnie 135/85 – granica dla pomiarów domowych. Jeśli lekarz ustalił inny cel, wpisz go tutaj.</p>' +
       '<div class="steppers">' + stepper('ts', c.ts, 'Skurczowe') + stepper('td', c.td, 'Rozkurczowe') + '</div>' +
       (c.ts !== 135 || c.td !== 85 ? '<div class="btn-row"><button class="btn small ghost" data-action="tgt-reset">Przywróć 135/85</button></div>' : '') + '</div>';
@@ -1112,9 +1125,11 @@
 
   function fieldRow(f) {
     var u = FIELD_UI[f], e = state.editor;
+    var last = C.lastReading(state.data);
+    var ph = last ? (f === 'p' ? (last.p ? String(last.p) : '–') : String(last[f])) : u.ph;
     return '<div class="frow" id="ed-row-' + f + '"><div class="f-l"><span>' + u.label + '</span>' + icon('heart', 'f-ic') + '<em>' + u.sub + '</em></div>' +
       '<button type="button" class="stp" data-f="' + f + '" data-d="-1" aria-label="' + u.label + ': mniej">−</button>' +
-      '<label class="f-v"><input id="ed-in-' + f + '" class="f-in num" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" autocomplete="off" enterkeyhint="' + (f === 'p' ? 'done' : 'next') + '" placeholder="–––" aria-label="' + u.label + ' (' + u.unit + ')" value="' + esc(e.vals[f]) + '"><span>' + u.unit + '</span></label>' +
+      '<label class="f-v"><input id="ed-in-' + f + '" class="f-in num" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" autocomplete="off" enterkeyhint="' + (f === 'p' ? 'done' : 'next') + '" placeholder="' + ph + '" aria-label="' + u.label + ' (' + u.unit + ')" value="' + esc(e.vals[f]) + '"><span>' + u.unit + '</span></label>' +
       '<button type="button" class="stp" data-f="' + f + '" data-d="1" aria-label="' + u.label + ': więcej">+</button></div>';
   }
 
@@ -1178,7 +1193,7 @@
       pv.innerHTML = statusChip(C.classify(s, di));
     } else {
       pv.className = 'preview hint-only';
-      pv.innerHTML = '<span>Wpisz wynik z ciśnieniomierza albo użyj przycisków − i +</span>';
+      pv.innerHTML = '<span>' + (C.lastReading(state.data) ? 'Szare liczby to Twój ostatni pomiar. Wpisz nowy wynik albo użyj − i +.' : 'Wpisz wynik z ciśnieniomierza albo użyj − i +.') + '</span>';
     }
   }
 
