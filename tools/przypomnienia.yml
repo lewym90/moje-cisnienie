@@ -1,0 +1,73 @@
+name: Przypomnienia o pomiarze
+
+# Plik dodaje aplikacja do Twojego PRYWATNEGO repozytorium z danymi (Profil → Przypomnienia o pomiarze).
+# Co godzinę sprawdza, czy pora na przypomnienie i czy jest świeży pomiar. Jeśli nie ma – wysyła powiadomienie.
+# Skrypt pobiera z publicznego repozytorium aplikacji: __CODE_REPO__
+on:
+  schedule:
+    - cron: '7 3-22 * * *'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Wyślij próbne powiadomienie'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: przypomnienia
+  cancel-in-progress: false
+
+jobs:
+  przypomnienie:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Pobierz dane
+        uses: actions/checkout@v4
+        with:
+          path: data
+
+      - name: Pobierz aplikację
+        uses: actions/checkout@v4
+        with:
+          repository: __CODE_REPO__
+          path: app
+
+      - name: Sprawdź, czy pora na przypomnienie
+        id: check
+        env:
+          DATA_DIR: data
+          TEST: ${{ inputs.test }}
+        run: node app/tools/remind.js --check
+
+      - name: Zainstaluj bibliotekę powiadomień
+        if: steps.check.outputs.send == 'true'
+        run: npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/wp" web-push@3.6.7
+
+      - name: Wyślij przypomnienie
+        if: steps.check.outputs.send == 'true'
+        env:
+          NODE_PATH: ${{ runner.temp }}/wp/node_modules
+          VAPID_PUBLIC_KEY: '__VAPID_PUBLIC__'
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          DATA_DIR: data
+          TEST: ${{ inputs.test }}
+        run: node app/tools/remind.js
+
+      - name: Zapisz stan przypomnień
+        if: steps.check.outputs.send == 'true'
+        working-directory: data
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "Ciśnienie przypomnienia"
+            git config user.email "cisnienie-przypomnienia@users.noreply.github.com"
+            git add -A
+            git commit -m "Ciśnienie: wysłano przypomnienie"
+            for i in 1 2 3; do
+              git pull --rebase && git push && break
+              sleep 3
+            done
+          fi

@@ -1,0 +1,39 @@
+/* Ciśnienie – raporty do druku / PDF. Te same reguły trafiają do pliku HTML pobieranego na iPhonie. */
+.rep { --c-low: #3a86d1; --c-opt: #17a173; --c-norm: #7bb63a; --c-high: #e8b015; --c-g1: #f2801f; --c-g2: #e2412f; --c-g3: #a3123a;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #1d1014; background: #fff; font-size: 12px; line-height: 1.38; }
+.rep h1 { font-size: 19px; margin: 0; letter-spacing: -0.01em; }
+.rep p { margin: 2px 0 0; color: #5a4a4f; }
+.rep-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; padding-bottom: 10px; border-bottom: 2px solid #e23d5b; margin-bottom: 12px; }
+.rep-brand { font-size: 18px; font-weight: 800; color: #e23d5b; text-align: right; }
+.rep-brand span { display: block; font-size: 10px; font-weight: 500; color: #7a6a6f; }
+.rep-sum { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+.rep-sum th { font-size: 10px; font-weight: 600; color: #7a6a6f; text-align: left; padding: 4px 6px; background: #fbf0f2; }
+.rep-sum td { font-size: 13px; padding: 5px 6px; border-bottom: 1px solid #ecdde1; }
+.rep-note { font-size: 11px; }
+.rep-chart { margin: 10px 0 12px; border: 1px solid #ecdde1; border-radius: 8px; padding: 8px 6px 2px; }
+.rep-chart svg { width: 100%; height: auto; display: block; max-height: 230px; }
+.rep .grid { stroke: #eadfe2; stroke-width: 1; }
+.rep .axis { fill: #7a6a6f; font-size: 10px; }
+.rep .tgt { stroke: #e23d5b; stroke-width: 1.2; stroke-dasharray: 4 4; }
+.rep .tgt-l { fill: #b81d3d; font-size: 10px; font-weight: 700; }
+.rep .cf-low { fill: var(--c-low); } .rep .cf-opt { fill: var(--c-opt); } .rep .cf-norm { fill: var(--c-norm); } .rep .cf-high { fill: var(--c-high); }
+.rep .cf-g1 { fill: var(--c-g1); } .rep .cf-g2 { fill: var(--c-g2); } .rep .cf-g3 { fill: var(--c-g3); }
+.rep .cb-low { --cat: var(--c-low); } .rep .cb-opt { --cat: var(--c-opt); } .rep .cb-norm { --cat: var(--c-norm); } .rep .cb-high { --cat: var(--c-high); }
+.rep .cb-g1 { --cat: var(--c-g1); } .rep .cb-g2 { --cat: var(--c-g2); } .rep .cb-g3 { --cat: var(--c-g3); }
+.rep .rd { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--cat); margin-right: 5px; vertical-align: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.rep-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.rep-table th, .rep-table td { padding: 3px 6px; border-bottom: 1px solid #f0e6e8; text-align: left; vertical-align: top; }
+.rep-table thead th { background: #fbf0f2; font-size: 10.5px; border-bottom: 1px solid #d9c3c9; }
+.rep-table tr.nd td { border-top: 1px solid #d9c3c9; }
+.rep tr { break-inside: avoid; }
+.rep-foot { font-size: 10px; margin-top: 12px !important; color: #7a6a6f !important; }
+.rep, .rep svg, .rep-sum th, .rep-table thead th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.doc { margin: 0; padding: 16px; background: #fff; }
+.noprint { color: #5a4a4f; font-size: 12px; margin-top: 16px; }
+@media print {
+  @page { margin: 12mm; }
+  body.printing #app { display: none !important; }
+  body.printing .print-only { display: block !important; }
+  body.printing { background: #fff; }
+  .noprint { display: none; }
+}

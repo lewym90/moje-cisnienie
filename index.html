@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ciśnienie</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://api.github.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="description" content="Ciśnienie – prosty dzienniczek pomiarów ciśnienia: średnie, wykresy i raport dla lekarza.">
+  <meta name="color-scheme" content="light dark">
+  <meta id="theme-color" name="theme-color" content="#2a0609">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Ciśnienie">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/report.css" media="print">
+  <script src="js/theme-init.js"></script>
+</head>
+<body>
+  <div id="app" class="app"></div>
+  <div id="print-root" class="print-only" aria-hidden="true"></div>
+  <noscript><p class="noscript">Ciśnienie wymaga włączonej obsługi JavaScript.</p></noscript>
+  <script src="js/core.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
